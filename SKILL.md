@@ -36,13 +36,25 @@ session JSONL files that Mentor's journal feed also derives from.
 emits an Action Journal entry to `{agent_root}/commons/journals/ocas-finch/`.
 
 **Cooperation:**
-- Receives: Session JSONL files (read-only, from `~/.hermes/sessions/`)
+- Receives: Session JSONL files (read-only, from `{agent_root}/sessions/`)
 - Emits: DecisionRecords (to `commons/data/ocas-finch/decisions.jsonl`)
 - Emits: Action Journals (to `commons/journals/ocas-finch/YYYY-MM-DD/`)
 - Writes: MEMORY.md (via memory tool), skill SKILL.md files (via skill_manage)
 
 **Independence:** Finch operates independently. It does not depend on Mentor,
 Fellow, Forge, or any other OCAS skill being present.
+
+## Responsibility boundary
+
+Finch owns session JSONL mining and routing of corrections/breakthroughs to MEMORY.md and skill patches. Does not own skill building (Forge), evaluation (Mentor/Fellow), or pattern analysis (Corvus).
+
+## Optional skill cooperation
+
+May route skill patch proposals to Forge intake when findings warrant a structural change. Otherwise operates independently.
+
+## Background tasks
+
+Finch has no operational background tasks. It runs on-demand or via Mentor invocation only.
 
 ## Storage
 
@@ -61,7 +73,7 @@ Per `spec-ocas-storage-conventions.md`, all persistent data lives under
 
 Finch skill package (scripts, references, SKILL.md):
 ```
-~/.hermes/skills/ocas-finch/
+{skill_root}/
   SKILL.md
   scripts/
     miner.py
@@ -87,7 +99,7 @@ Finch skill package (scripts, references, SKILL.md):
 
 | File | Why read-only |
 |---|---|
-| **Session JSONL** (`~/.hermes/sessions/`) | Source of truth. Never modify transcripts. |
+| **Session JSONL** (`{agent_root}/sessions/`) | Source of truth. Never modify transcripts. |
 | **state.db** | Historical reference only. Too slow for active use. |
 
 ### Off-limits (finch never touches these)
@@ -118,7 +130,7 @@ skill files, decision logs).
 
 ## Data source
 
-**Primary:** Session JSONL files in `~/.hermes/sessions/`
+**Primary:** Session JSONL files in `{agent_root}/sessions/`
 
 Each file is a conversation transcript with messages containing:
 - `role`: "user", "assistant", "tool", or "session_meta"
@@ -157,7 +169,7 @@ These are **priority 0** — the highest priority. Apply immediately and promine
 
 ### 1. MEMORY.md (highest impact)
 
-`~/.hermes/MEMORY.md` is injected into every session's system prompt. Changes here
+`{agent_root}/MEMORY.md` is injected into every session's system prompt. Changes here
 affect **all future sessions immediately**. This is where corrections, directives,
 and behavioral rules go.
 
@@ -187,12 +199,12 @@ Structure additions by section:
 
 ### 2. Skill patches (high impact)
 
-Existing skill SKILL.md files in `~/.hermes/skills/`. Changes here affect behavior
+Existing skill SKILL.md files in `{agent_root}/`. Changes here affect behavior
 when the skill is loaded. Only patch **user skills** — never bundled skills.
 
 ### 3. Config changes (medium impact)
 
-`~/.hermes/config.yaml` for agent-wide configuration changes. Suggest first,
+`{agent_root}/config.yaml` for agent-wide configuration changes. Suggest first,
 don't auto-apply.
 
 ## Workflow
@@ -200,7 +212,7 @@ don't auto-apply.
 ### Step 1: Mine
 
 ```bash
-python3 ~/.hermes/skills/ocas-finch/scripts/miner.py --days 7 --json > /tmp/finch_mined.json
+python3 {skill_root}/scripts/miner.py --days 7 --json > /tmp/finch_mined.json
 ```
 
 Options:
@@ -211,7 +223,7 @@ Options:
 ### Step 2: Compact
 
 ```bash
-python3 ~/.hermes/skills/ocas-finch/scripts/compact.py --apply
+python3 {skill_root}/scripts/compact.py --apply
 ```
 
 Runs deduplication, contradiction check, re-ranking, and eviction on existing
@@ -230,7 +242,7 @@ Evicted entries are archived to `commons/data/ocas-finch/memory_archive.md`.
 ### Step 3: Route
 
 ```bash
-python3 ~/.hermes/skills/ocas-finch/scripts/router.py --input /tmp/finch_mined.json
+python3 {skill_root}/scripts/router.py --input /tmp/finch_mined.json
 ```
 
 Produces an action plan: which findings go to MEMORY.md, which need skill
