@@ -31,4 +31,37 @@ Skills with version tags (e.g., `ocas-rally` at `v3.0.1`) may be left in detache
 
 ## All OCAS Skill Remotes
 
-All skill repos are under `https://github.com/indigokarasu/` with repo names matching the skill directory name (except `ocas-bones` → `odds`, `ocas-spot` → `ocas-spot`).
+All skill repos are under `https://github.com/indigokarasu/` with repo names matching the skill directory name minus the `ocas-` prefix:
+- `ocas-bones` → `bones`
+- `ocas-spot` → `ocas-spot` (exception — full name preserved)
+- All others: `ocas-<name>` → `<name>`
+
+## Unrelated Histories (Most Common Scenario)
+
+Local skill directories and their GitHub remotes are often initialized separately. When pushing, you'll hit:
+
+```
+fatal: refusing to merge unrelated histories
+```
+
+**Fix:** Force push. The local directory is the authoritative source:
+
+```bash
+git push origin main --force
+```
+
+Do NOT `git pull --allow-unrelated-histories` — it creates messy merge commits.
+
+## Auth: Use gh Credential Helper, Not Embedded Tokens
+
+Remote URLs should be clean:
+```
+https://github.com/indigokarasu/repo.git
+```
+
+If a remote URL contains an embedded/corrupted token (e.g., `ghp_rB...y5G7`), fix it:
+```bash
+git remote set-url origin https://github.com/indigokarasu/repo.git
+```
+
+Authentication is handled by `gh auth git-credential` — never embed tokens in URLs.

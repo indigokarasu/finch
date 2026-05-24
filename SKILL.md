@@ -193,6 +193,7 @@ All executed by loading the ocas-finch skill and following the relevant pipeline
 - Don't use `delegate_task` from cron jobs — the work job IS the executor
 - Don't copy-paste core loop descriptions from other skills — each skill's core loop must reflect its own actual workflow (e.g., finch: scan→work→mine→route→journal, NOT praxis: record→extract→propose→activate→debrief)
 - **Cross-skill copy-paste contamination** — When doing major rewrites of similar skills (e.g., Praxis and Finch both have "core loop" sections), verify each skill's content is self-consistent after editing. A copy-paste from a sibling skill can introduce foreign concepts (e.g., Praxis's "propose shift → activate" appearing in Finch). After any major rewrite, re-read the skill's core loop and key sections to confirm they describe THIS skill's workflow, not a neighbor's.
+- **Over-explaining before executing** — When the user asks you to fix or do something, DO IT FIRST. Don't present a long analysis, table of findings, and "want me to proceed?" before acting. Execute the fix, then report what you did. The user asked for action, not a briefing.
 - **Missed subdirectory skills** — When auditing or reviewing a skill library, use `find` with the full skills path rather than globbing only top-level directories. Skills in subdirectories like `infrastructure/` and `ocas/` are easily missed by shallow glob patterns.
 - **Reference index pattern** — When creating reference files, store them in a centralized cross-session reference directory and maintain an INDEX.md with one-line "when to use" entries. Add a one-liner pointer in MEMORY.md. This is the canonical pattern for cross-session knowledge accumulation: MEMORY points to INDEX, INDEX points to files.
 
@@ -214,6 +215,8 @@ All executed by loading the ocas-finch skill and following the relevant pipeline
 5. Create a new class-level umbrella only when no existing skill covers the class
 
 **Style corrections belong in the SKILL.md body**, not just in memory. Memory captures "who the user is and current state"; skills capture "how to do this class of task for this user."
+
+**When the user asks you to fix or patch something: do it first, explain after.** Don't present a long analysis and ask for confirmation before acting. The user asked for action — execute, then report what you did.
 
 **Do NOT capture:** environment-dependent failures, negative claims about tools, transient errors that resolved, or one-off task narratives.
 
@@ -238,7 +241,8 @@ See `references/pitfalls.md` for the full consolidated pitfalls list (20+ items 
 | `references/cleanup-and-health.md` | During system health audits and cleanup runs; when checking disk or lock files |
 | `references/external-skill-overlap-map.md` | Before creating evaluation/reflection skills; when checking for duplication |
 | `references/git-skill-push-pattern.md` | When pushing skill changes to GitHub; git workflow reference |
-| `references/pitfalls.md` | Before any finch operation; contains hard-won lessons and anti-patterns |
+|| `references/pitfalls.md` | Before any finch operation; contains hard-won lessons and anti-patterns |
+|| `references/2026-05-23.md` | agentskill.sh false positive patterns, bower refactor technique, GitHub repo conventions |
 | `references/skill-audit-methodology.md` | When auditing or reviewing the skill library; contains the agentskill.sh rubric and audit process |
 | `references/2026-05-23.md` | HEARTBEAT.md removal session notes; OCAS skill library audit summary |
 
