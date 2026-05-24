@@ -1,11 +1,24 @@
 #!/bin/bash
-# self_update.py — OCAS self-update via gh CLI
+# self_update.sh — OCAS self-update via gh CLI
 # Checks GitHub for newer version and pulls if available.
 #
+# Usage: bash scripts/self_update.sh [--help]
+#
 # Called by ocas-finch self-update mechanism.
-# Usage: python3 scripts/self_update.py
 
 set -euo pipefail
+
+# ── Help ────────────────────────────────────────────────────────────────────
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    echo "Usage: bash scripts/self_update.sh [--help]"
+    echo ""
+    echo "Checks GitHub for a newer version of the skill package and installs it."
+    echo "Preserves archive/ and data/ directories."
+    echo ""
+    echo "Options:"
+    echo "  --help, -h    Show this help message and exit"
+    exit 0
+fi
 
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 FRONTMATTER="$SKILL_DIR/SKILL.md"
