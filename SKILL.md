@@ -241,10 +241,9 @@ See `references/pitfalls.md` for the full consolidated pitfalls list (20+ items 
 | `references/cleanup-and-health.md` | During system health audits and cleanup runs; when checking disk or lock files |
 | `references/external-skill-overlap-map.md` | Before creating evaluation/reflection skills; when checking for duplication |
 | `references/git-skill-push-pattern.md` | When pushing skill changes to GitHub; git workflow reference |
-|| `references/pitfalls.md` | Before any finch operation; contains hard-won lessons and anti-patterns |
-|| `references/2026-05-23.md` | agentskill.sh false positive patterns, bower refactor technique, GitHub repo conventions |
+| `references/pitfalls.md` | Before any finch operation; contains hard-won lessons and anti-patterns |
+| `references/security_architecture.md` | When reviewing security audit results on OCAS skills; contains structural analysis of Hermes security invariants and known scanner false-positive patterns |
 | `references/skill-audit-methodology.md` | When auditing or reviewing the skill library; contains the agentskill.sh rubric and audit process |
-| `references/2026-05-23.md` | HEARTBEAT.md removal session notes; OCAS skill library audit summary |
 
 ## Self-update
 
