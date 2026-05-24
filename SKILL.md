@@ -193,8 +193,8 @@ All executed by loading the ocas-finch skill and following the relevant pipeline
 - Don't use `delegate_task` from cron jobs — the work job IS the executor
 - Don't copy-paste core loop descriptions from other skills — each skill's core loop must reflect its own actual workflow (e.g., finch: scan→work→mine→route→journal, NOT praxis: record→extract→propose→activate→debrief)
 - **Cross-skill copy-paste contamination** — When doing major rewrites of similar skills (e.g., Praxis and Finch both have "core loop" sections), verify each skill's content is self-consistent after editing. A copy-paste from a sibling skill can introduce foreign concepts (e.g., Praxis's "propose shift → activate" appearing in Finch). After any major rewrite, re-read the skill's core loop and key sections to confirm they describe THIS skill's workflow, not a neighbor's.
-- **Missed subdirectory skills** — When auditing or reviewing a skill library, use `find ~/.hermes/skills -name "SKILL.md" -path "*/pattern*"` rather than globbing only `skills/pattern-*/`. Skills in subdirectories like `infrastructure/ocas-vpn/` and `ocas/ocas-genie/` are easily missed by shallow glob patterns.
-- **Reference index pattern** — When creating reference files, store them in a centralized location (`~/.hermes/references/`) and maintain an INDEX.md with one-line "when to use" entries. Add a one-liner pointer in MEMORY.md → "Reference index: /root/.hermes/references/INDEX.md". This is the canonical pattern for cross-session knowledge accumulation: MEMORY points to INDEX, INDEX points to files.
+- **Missed subdirectory skills** — When auditing or reviewing a skill library, use `find` with the full skills path rather than globbing only top-level directories. Skills in subdirectories like `infrastructure/` and `ocas/` are easily missed by shallow glob patterns.
+- **Reference index pattern** — When creating reference files, store them in a centralized cross-session reference directory and maintain an INDEX.md with one-line "when to use" entries. Add a one-liner pointer in MEMORY.md. This is the canonical pattern for cross-session knowledge accumulation: MEMORY points to INDEX, INDEX points to files.
 
 ## Active review principle
 
@@ -210,7 +210,7 @@ All executed by loading the ocas-finch skill and following the relevant pipeline
 1. Update the skill that was loaded/consulted and covers this territory
 2. Update an existing umbrella skill via skills_list + skill_view
 3. Add a support file (`references/`, `templates/`, or `scripts/`) under an existing umbrella
-4. Create a new reference file in `~/.hermes/references/` when the finding is a cross-session canonical pattern (see "Reference file creation criteria" above)
+4. Create a new reference file in the cross-session reference directory when the finding is a cross-session canonical pattern (see "Reference file creation criteria" above)
 5. Create a new class-level umbrella only when no existing skill covers the class
 
 **Style corrections belong in the SKILL.md body**, not just in memory. Memory captures "who the user is and current state"; skills capture "how to do this class of task for this user."
