@@ -216,9 +216,9 @@ All executed by loading the ocas-finch skill and following the relevant pipeline
 
 **Style corrections belong in the SKILL.md body**, not just in memory. Memory captures "who the user is and current state"; skills capture "how to do this class of task for this user."
 
-**When the user asks you to fix or patch something: do it first, explain after.** Don't present a long analysis and ask for confirmation before acting. The user asked for action — execute, then report what you did.
+**When the user asks you to fix or patch something: do it first, explain after.** Don't present a long analysis and ask for confirmation before acting. The user asked for action — execute, then report what you did. This applies to all finch operations: skill patches, memory updates, reference file creation, and git operations.
 
-**Do NOT capture:** environment-dependent failures, negative claims about tools, transient errors that resolved, or one-off task narratives.
+**Be active but surgical.** "Active" doesn't mean "do extra work." It means: scan for the signals listed above. If they fired, act. If nothing fired and the session ran cleanly, "Nothing to save" is the correct outcome. Don't manufacture updates to fill a quota. Don't do work the user didn't ask for. Don't cross-reference issues that weren't requested. The goal is quality of signal detection, not volume of updates.
 
 ## Pitfalls
 
