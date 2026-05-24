@@ -33,9 +33,9 @@ All four jobs are pure LLM cron prompts. No Python scripts at runtime. Deprecate
 **Journal type:** Action Journal. Every finch run emits an Action Journal entry to `{agent_root}/commons/journals/ocas-finch/`.
 
 **Cooperation:**
-- Receives: Session JSONL files (read-only, from `~/.hermes/sessions/`)
-- Reads: BehavioralSignal files from `{agent_root}/commons/data/ocas-corvus/signals/`
-- Emits: DecisionRecords to `commons/data/ocas-finch/decisions.jsonl`
+- Receives: Session transcripts (read-only, from the agent's session store)
+- Reads: BehavioralSignal files from the Corvus signal directory
+- Emits: DecisionRecords to the Finch decision log
 - Writes: MEMORY.md (via memory tool), skill SKILL.md files (via skill_manage)
 
 ## Storage
@@ -54,7 +54,7 @@ All four jobs are pure LLM cron prompts. No Python scripts at runtime. Deprecate
 
 Skill package:
 ```
-~/.hermes/skills/ocas-finch/
+<skill-directory>/
   SKILL.md
   scripts/
     self_update.sh           — OCAS self-update via gh CLI (only active script)
@@ -79,8 +79,8 @@ Skill package:
 |------|------|-----|
 | **MEMORY.md** | Corrections, directives, breakthroughs, stop signals. Concise 1-liners. Pointers to deeper reference files. | `memory` tool |
 | **Skill SKILL.md files** | Methodologies, workflows, edge cases, pitfalls (skill-specific) | `skill_manage` tool |
-| **Reference files** (`~/.hermes/references/*.md`) | Cross-session canonical patterns, guides, references. Created when a finding doesn't fit cleanly in MEMORY.md or a single skill. | `write_file` tool |
-| **Reference INDEX** (`~/.hermes/references/INDEX.md`) | One-line "when to use" entry for each reference file. Updated whenever a new reference file is created. | `patch` or `write_file` tool |
+| **Reference files** (cross-session reference directory) | Cross-session canonical patterns, guides, references. Created when a finding doesn't fit cleanly in MEMORY.md or a single skill. | `write_file` tool |
+| **Reference INDEX** (cross-session reference directory) | One-line "when to use" entry for each reference file. Updated whenever a new reference file is created. | `patch` or `write_file` tool |
 | **decisions.jsonl** | DecisionRecord per routing decision | Direct write |
 | **intents.jsonl** | Durable intent queue | Direct write |
 | **evidence.jsonl** | Execution evidence log | Direct write |
@@ -88,7 +88,7 @@ Skill package:
 
 ### Read-only
 
-Session JSONL (`~/.hermes/sessions/`), BehavioralSignal files, state.db.
+Session transcripts, BehavioralSignal files, state.db.
 
 ### Off-limits
 
@@ -238,8 +238,9 @@ See `references/pitfalls.md` for the full consolidated pitfalls list (20+ items 
 | `references/cleanup-and-health.md` | During system health audits and cleanup runs; when checking disk or lock files |
 | `references/external-skill-overlap-map.md` | Before creating evaluation/reflection skills; when checking for duplication |
 | `references/git-skill-push-pattern.md` | When pushing skill changes to GitHub; git workflow reference |
-|| `references/pitfalls.md` | Before any finch operation; contains hard-won lessons and anti-patterns |
-|| `references/skill-audit-methodology.md` | When auditing or reviewing the skill library; contains the agentskill.sh rubric and audit process |
+| `references/pitfalls.md` | Before any finch operation; contains hard-won lessons and anti-patterns |
+| `references/skill-audit-methodology.md` | When auditing or reviewing the skill library; contains the agentskill.sh rubric and audit process |
+| `references/2026-05-23.md` | HEARTBEAT.md removal session notes; OCAS skill library audit summary |
 
 ## Self-update
 
