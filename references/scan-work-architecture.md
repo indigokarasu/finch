@@ -1,0 +1,94 @@
+# finch:scan / finch:work Architecture
+
+## Problem
+
+The finch anticipation system went through three architectural iterations in May 2026, each failing for a distinct reason:
+
+### V1 — Single Prompt (Scan + Action)
+- One cron prompt that scanned all signal sources AND executed tasks
+- **Failure:** Scanning consumed the entire context window. The agent would read emails, calendar, sessions, cron health, etc., then run out of tokens before reaching the action phase. Result: lots of analysis, no action.
+
+### V2 — Python Script + LLM
+- Split into `anticipate.py` (Python scans, writes task list JSON) + cron agent (reads JSON, acts)
+- **Failure:** The Python script was the scanner, so the LLM became a dumb executor with no judgment. As Jared put it: "You took the LLM out of the loop so it became useless." The interop overhead also added latency and failure modes.
+
+### V3 — Two LLM Cron Jobs (Current)
+- `finch:scan` (every 2h): Wide lens, prioritization intelligence. Scans all signal sources, maintains the ranked task list. Does NOT execute tasks.
+- `finch:work` (every 30min): Narrow lens, execution intelligence. Picks top pending item, loads the governing skill, executes the task. ONE task per run.
+- **Key insight:** Both sides must be LLM-powered. The difference is scope, not capability.
+
+## Why This Works
+
+1. **Bounded scanning:** The scan job has a wide lens but a single job — maintain the list.
+2. **Focused execution:** The work job picks ONE item and goes deep.
+3. **LLM both sides:** The scanner makes value judgments about priority. The worker makes value judgments about how to execute.
+4. **No Python interop:** Pure cron prompts. No scripts between the LLM and the task list.
+5. **Skill governance:** The work job loads the governing skill before executing.
+
+## What To Never Do
+
+- Never merge scan and action into one prompt (V1 failure)
+- Never put a Python script between the LLM and the task list (V2 failure)
+- Never make the worker "dumb" — it needs full LLM reasoning
+- Never invoke `anticipate.py` or `task_list_builder.py` — they're deprecated
+- Never use `delegate_task` from a cron job for finch work items
+- Never include LinkedIn as a scan source — the LinkedIn MCP only accesses the agent's own LinkedIn, not Jared's
+- Never call Gmail/Calendar/Drive MCP without `user_google_email="jared.zimmerman@gmail.com"`
+- Never skip a signal source during scanning — all 6 sources must be checked every run
+- Never treat the existing task list as ground truth — always validate items are still active
+
+## Signal Sources Scanned by finch:scan
+
+| Source | What to look for | Tool |
+|--------|-----------------|------|
+| **Cron health** | Jobs with error status, jobs that haven't run when expected | cronjob(action='list') |
+| **Email** | Unread/urgent messages needing response, actionable threads | Gmail MCP — **must pass user_google_email=jared.zimmerman@gmail.com** |
+| **Calendar** | Next 48h events, prep needs, travel gaps, conflicts | Google Calendar MCP — **must pass user_google_email=jared.zimmerman@gmail.com** |
+| **Sessions** | Unfinished work from recent conversations | session_search |
+| **Drive** | Recently shared/modified files needing attention | Drive MCP — **must pass user_google_email=jared.zimmerman@gmail.com** |
+| **System** | Disk space, stale lock files, /tmp size, zombie processes | terminal(df -h, du -sh, etc.) |
+
+**NOTE:** LinkedIn is NOT a valid scan source for Jared's account.
+
+## Governance Model
+
+Each task item has a `governed_by` field. The work job loads the corresponding skill before executing:
+
+| governed_by | Skill rules |
+|---|---|
+| `ocas-dispatch` | Draft-only in cron. Never send email directly. |
+| `private/headhunter` | Quality over speed. No repeats. CDO/VP/SVP/CPO only. $500k+ base. |
+| `ocas-sands` | Calendar management rules from ocas-sands SKILL.md |
+| `ocas-rally` | Portfolio research rules from ocas-rally SKILL.md |
+| `ocas-odds` | Prediction market rules from ocas-odds SKILL.md |
+| `ocas-weave` | Contact management rules from ocas-weave SKILL.md |
+| `ocas-sift` | Research rules from ocas-sift SKILL.md |
+| `system` | General system maintenance. No special skill rules. |
+
+NEVER create a task that asks the work agent to violate its governing skill's rules.
+
+## Task List Schema
+
+```json
+{
+  "items": [
+    {
+      "id": "unique-slug",
+      "title": "Short description",
+      "priority": 9,
+      "status": "pending",
+      "governed_by": "ocas-dispatch",
+      "description": "Full context for the work agent including what was found and what action to take",
+      "source": "email",
+      "created": "2026-05-17T15:00:00Z",
+      "completed": null
+    }
+  ],
+  "refreshed": "2026-05-17T15:00:00Z",
+  "done_count": 0
+}
+```
+
+## Superseded: Delegation Pattern
+
+The previous delegation pattern (orchestrator cron → `delegate_task` → sub-agent) was replaced by the scan/work architecture. The finch:scan job IS the orchestrator. The finch:work job IS the executor. No `delegate_task` from cron jobs. See `archive/delegation-pattern.md` in earlier versions for historical reference.

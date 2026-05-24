@@ -1,0 +1,27 @@
+{
+  "skill": "ocas-finch",
+  "version": "1.0.0",
+  "description": "Evaluation test cases for ocas-finch",
+  "evals": [
+    {
+      "input": "Mine recent sessions for behavioral signals",
+      "expected_output": "Scans session JSONL files for corrections, directives, breakthroughs and returns mined findings",
+      "description": "Session mining"
+    },
+    {
+      "input": "What self-improvement tasks are pending?",
+      "expected_output": "Returns the prioritized task list from task-list.json with scan results and pending work items",
+      "description": "Task list status"
+    },
+    {
+      "input": "Run the daily self-improvement pipeline",
+      "expected_output": "Executes finch.run: mines 24h of sessions, compacts MEMORY.md, routes findings, auto-applies low-risk items",
+      "description": "Daily pipeline"
+    },
+    {
+      "input": "Compact MEMORY.md",
+      "expected_output": "Deduplicates, re-ranks, evicts stale entries, and compresses MEMORY.md",
+      "description": "Memory compaction"
+    }
+  ]
+}
