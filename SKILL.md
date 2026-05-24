@@ -106,7 +106,7 @@ Create a new reference file rather than appending to MEMORY.md when:
 
 **After creating a reference file:**
 1. Add a one-line "when to use" entry to `INDEX.md`
-2. Add a one-line pointer in MEMORY.md under the relevant section (e.g., "Reference index: `~/.hermes/references/INDEX.md`")
+2. Add a one-line pointer in MEMORY.md under the relevant section (e.g., "Reference index: INDEX.md in the cross-session reference directory")
 3. Log the decision in `decisions.jsonl` with `decision_type: "reference_file_created"`
 
 ## Signal types
@@ -133,7 +133,7 @@ When the user says "Always" or "Never", this is an explicit behavioral rule. **P
 4. **Route** — Findings routed to:
    - MEMORY.md (via memory tool) — for concise state/correction/directive entries
    - Skill SKILL.md files (via skill_manage) — for skill-specific methodologies and pitfalls
-   - Reference files (`~/.hermes/references/*.md`) — for cross-session canonical patterns and guides
+   - Reference files (cross-session reference directory) — for cross-session canonical patterns and guides
 5. **Journal** — Every run emits Action Journal + DecisionRecord
 
 Daily/weekly runs add: compact MEMORY.md, auto-apply low-risk findings, flag directives for review, migrate bloated memory entries to reference files.
