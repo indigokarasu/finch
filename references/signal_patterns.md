@@ -108,6 +108,52 @@ User stops or cancels a task.
 
 **Routing:** MEMORY.md → Stop Signals section
 
+## Failure-Phase Patterns
+
+Corrections should be tagged with their failure phase to enable targeted skill patches. After detecting any correction signal above, classify the phase:
+
+### Planning failure patterns
+Agent chose wrong approach, had incorrect assumptions, or missed prerequisites.
+
+**Patterns:**
+- `\bshould have (checked|verified|confirmed|read|looked)\b`
+- `\bbefore (you|doing|starting)\b.*\b(should|need to|have to)\b`
+- `\bwrong (approach|method|way|direction|tool)\b`
+- `\bthat's not the right (way|approach|method)\b`
+- `\bthis won't work (because|since)\b`
+- `\bdidn't (consider|account for|think about)\b`
+- `\bmissing (prerequisite|dependency|step|requirement)\b`
+
+**Tag:** `[PHASE:planning]`
+
+### Execution failure patterns
+Right plan but wrong tool call, wrong parameters, API failure, or timeout.
+
+**Patterns:**
+- `\bfailed (to|because|with)\b`
+- `\b(error|timeout|exception|reject)\b`
+- `\bwrong (parameter|argument|value|option|flag)\b`
+- `\b(doesn't|does not) (exist|work|support)\b`
+- `\bpointing to (wrong|old|incorrect)\b`
+- `\b(invalid|bad|malformed) (input|format|syntax)\b`
+
+**Tag:** `[PHASE:execution]`
+
+### Response failure patterns
+Correct result but wrong output format, verbosity, tone, or framing.
+
+**Patterns:**
+- `\b(too|way too|far too) (verbose|long|wordy|brief|short)\b`
+- `\b(format|structure|layout|style)\b.*\b(wrong|bad|doesn't fit)\b`
+- `\bjust (give|tell|show) (me )?(the|it)\b`
+- `\bdon't (explain|narrate|elaborate|summarize)\b`
+- `\b(ignore|skip|remove) (the|this) (summary|explanation|context)\b`
+- `\b(make it|keep it) (concise|short|brief|simple)\b`
+
+**Tag:** `[PHASE:response]`
+
+When routing, include the phase tag so the skill patch targets the right section of the skill.
+
 ## Filtering Rules
 
 The miner automatically excludes:

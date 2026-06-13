@@ -81,6 +81,8 @@ DecisionRecord entries in `{agent_root}/commons/data/ocas-finch/decisions.jsonl`
 
 ## Lessons learned
 
+0. **FTS5 minimum token length** — `session_search` uses FTS5, which silently drops tokens shorter than 3-4 characters. Short-form corrections like "No", "Don't", "Stop" are **invisible** to `query=` searches. When mining for corrections, use browse-mode `session_search` (no `query`) with `role_filter=user` and scan user messages directly. Only use `query=` for multi-word terms where at least one token is ≥3 chars (e.g., `"actually wrong"` works because "actually" survives; `"no don't stop"` matches nothing). This is the single biggest source of false-negative mining results.
+
 1. **Context compaction messages leak through** — Many sessions contain
    "[CONTEXT COMPACTION — REFERENCE ONLY]" blocks that mention "always" and
    "never" as part of the compaction summary. These must be filtered out.

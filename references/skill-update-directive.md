@@ -16,6 +16,23 @@ Review the conversation for any of these signals:
 
 4. **Wrong/missing/outdated skill content** — A skill you loaded or consulted turned out to be incorrect, missing a step, or outdated.
 
+5. **Failure-phase signals** — Corrections that cluster in planning, execution, or response phases. Tag corrections by phase for surgical skill patching.
+
+## Execute the update — don't just report it
+
+When you detect a signal, apply the patch immediately. Don't produce a summary of "things to update later." If a skill needs patching, patch it via skill_manage. If MEMORY.md needs an entry, write it now. The user expects end-to-end delivery: detect → route → apply → verify.
+
+## Elaborate: include "why" and "when"
+
+Every correction should include causal grounding:
+- **What**: What was wrong
+- **Why**: The underlying principle / causal mechanism
+- **When**: The contexts where this applies (boundary conditions)
+
+Format: `[CORRECTION] What: <what>. Why: <principle>. When: <context>`
+
+Grounded corrections transfer across contexts. Bare corrections ("don't do X") are single-instance fixes that decay faster.
+
 ## Routing preference (earliest fit wins)
 
 1. **Update the loaded skill** — If a skill was loaded via /skill-name or skill_view and it covers the territory of the new learning, patch it first.

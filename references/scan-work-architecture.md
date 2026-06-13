@@ -35,17 +35,17 @@ The finch anticipation system went through three architectural iterations in May
 - Never include LinkedIn as a scan source — the LinkedIn MCP only accesses the agent's own LinkedIn, not Jared's
 - Never call Gmail/Calendar/Drive MCP without `user_google_email="jared.zimmerman@gmail.com"`
 - Never skip a signal source during scanning — all 6 sources must be checked every run
-- Never treat the existing task list as ground truth — always validate items are still active
+- **Never treat the existing task list as ground truth — always validate items are still active.** When finch:scan refreshes the task list, re-check each pending task's underlying signal. If the signal has self-resolved (cron job now healthy, OAuth now valid, appointment now passed), mark it done rather than carrying it forward. Stale pending tasks waste finch:work cycles on already-fixed issues.
 
 ## Signal Sources Scanned by finch:scan
 
 | Source | What to look for | Tool |
 |--------|-----------------|------|
-| **Cron health** | Jobs with error status, jobs that haven't run when expected | cronjob(action='list') |
-| **Email** | Unread/urgent messages needing response, actionable threads | Gmail MCP — **must pass user_google_email=jared.zimmerman@gmail.com** |
-| **Calendar** | Next 48h events, prep needs, travel gaps, conflicts | Google Calendar MCP — **must pass user_google_email=jared.zimmerman@gmail.com** |
+| **Cron health** | Jobs with error status, jobs that haven't run when expected | `search_files` or `terminal('cat /root/.hermes/cron/jobs.json')` — `cronjob(action='list')` does NOT exist in all profiles |
+| **Email** | Unread/urgent messages needing response, actionable threads | Gmail MCP — **must pass user_google_email=jared.zimmerman@gmail.com**. NOTE: The MCP tool names `mcp_google_workspace_*` referenced in the finch:scan prompt do NOT exist. When unavailable, mark as blocked. |
+| **Calendar** | Next 48h events, prep needs, travel gaps, conflicts | Google Calendar MCP — **must pass user_google_email=jared.zimmerman@gmail.com**. NOTE: Same MCP availability issue as email. |
 | **Sessions** | Unfinished work from recent conversations | session_search |
-| **Drive** | Recently shared/modified files needing attention | Drive MCP — **must pass user_google_email=jared.zimmerman@gmail.com** |
+| **Drive** | Recently shared/modified files needing attention | Drive MCP — **must pass user_google_email=jared.zimmerman@gmail.com**. NOTE: Same MCP availability issue as email. |
 | **System** | Disk space, stale lock files, /tmp size, zombie processes | terminal(df -h, du -sh, etc.) |
 
 **NOTE:** LinkedIn is NOT a valid scan source for Jared's account.
