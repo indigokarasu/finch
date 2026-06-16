@@ -1,6 +1,6 @@
 {
   "skill": "ocas-finch",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Evaluation test cases for ocas-finch",
   "evals": [
     {
@@ -22,6 +22,31 @@
       "input": "Compact MEMORY.md",
       "expected_output": "Deduplicates, re-ranks, evicts stale entries, and compresses MEMORY.md",
       "description": "Memory compaction"
+    },
+    {
+      "input": "Run memory_guard.py --apply on MEMORY.md that is 2,400 chars with 3 Always/Never directives and 2 see references/ pointer lines",
+      "expected_output": "MEMORY.md is at or under 2,200 chars post-write; all 3 directives are still present; pointer lines are removed; evicted lines are archived to memory_archive.md; a DecisionRecord is logged",
+      "description": "Guard cap enforcement + directive protection + pointer stripping"
+    },
+    {
+      "input": "Run memory_guard.py --apply twice on the same compliant MEMORY.md",
+      "expected_output": "Second run is byte-identical no-op (idempotent_noop=true); no backup churn; no archive entries added",
+      "description": "Guard idempotency"
+    },
+    {
+      "input": "Run memory_guard.py --apply on MEMORY.md where directives alone exceed 2,200 chars",
+      "expected_output": "Guard refuses to evict directives; emits STILL OVER CAP warning; does not write; DecisionRecord logged with over_cap_after=true",
+      "description": "Guard refuses to evict directives past cap"
+    },
+    {
+      "input": "Kill memory_guard.py mid-write (SIGKILL during atomic_write), then inspect MEMORY.md",
+      "expected_output": "MEMORY.md is either the old content or the new content, never a partial write; .tmp file is cleaned up or .lock is stale-reclaimed",
+      "description": "Guard atomic under kill"
+    },
+    {
+      "input": "Run memory_guard.py --apply --emit-decision, then check decisions.jsonl",
+      "expected_output": "A new DecisionRecord entry exists with decision_type=memory_enforce, outcome=applied, and correct size/stripped/evicted counts",
+      "description": "Guard DecisionRecord logging"
     }
   ]
 }
