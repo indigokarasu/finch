@@ -123,19 +123,6 @@ Write the final MEMORY.md. Format:
 - Ordered per Step 6 analysis
 - Total length ≤ 2,200 chars
 
-**Deterministic enforcement (MANDATORY final step).** Do not trust the char count above -
-after writing your proposed MEMORY.md, run the safety guard to GUARANTEE the cap and a safe write:
-
-    python3 ~/.hermes/profiles/indigo/skills/ocas-finch/scripts/memory_guard.py --apply --emit-decision
-
-It enforces the hard cap (deterministically evicting lowest-priority NON-directive lines; Always/Never
-directives are never auto-evicted), strips 'see references/...' pointer anti-patterns, writes atomically
-with a timestamped backup under a PID lock (OOM/race-safe vs the live `memory` tool), archives anything
-removed to `commons/data/ocas-finch/memory_archive.md`, logs a DecisionRecord, and is a no-op when
-MEMORY.md is already compliant. If it warns `STILL OVER CAP` (directives alone exceed the cap),
-consolidate via the LLM steps above or flag for human review - never force past it.
-
-
 ## Reinforcement Schedule
 
 Mirrors spaced repetition intervals:
