@@ -36,7 +36,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 HERMES_HOME = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes")))
-DEFAULT_MEMORY = HERMES_HOME / "MEMORY.md"
+_HERMES_PROFILE = os.getenv("HERMES_PROFILE", "indigo")
+# If HERMES_HOME already ends with profiles/<name>, use it directly; otherwise resolve normally
+if HERMES_HOME.name != "profiles" and (HERMES_HOME / "profiles" / _HERMES_PROFILE).is_dir():
+    DEFAULT_MEMORY = HERMES_HOME / "profiles" / _HERMES_PROFILE / "MEMORY.md"
+else:
+    DEFAULT_MEMORY = HERMES_HOME / "MEMORY.md"
 HARD_CAP = int(os.getenv("HERMES_MEMORY_CHAR_LIMIT", "2200"))
 SOFT_TARGET = int(os.getenv("HERMES_MEMORY_SOFT_TARGET", "500"))
 ARCHIVE = HERMES_HOME / "commons" / "data" / "ocas-finch" / "memory_archive.md"
