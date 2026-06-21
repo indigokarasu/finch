@@ -1,13 +1,20 @@
 ---
-name: ocas-finch
-description: 'OCAS self-improvement orchestrator (Darwin''s finch — adaptive evolution). Mines session JSONL files to detect corrections, breakthroughs, methodologies, course-changes, and behavioral directives (Always/Never). Routes each finding to the optimal storage tier: MEMORY.md, skill files, reference files, or Chronicle KG. Compacts MEMORY.md by routing entries to the correct tier. Part of the OCAS System Evolution Layer alongside Mentor, Fellow, and Forge. NOT for real-time behavioral adaptation, skill evaluation, or skill creation.'
-license: MIT
-source: https://github.com/indigokarasu/finch
+description: 'OCAS self-improvement orchestrator (Darwin''s finch — adaptive evolution).
+  Mines session JSONL files to detect corrections, breakthroughs, methodologies, course-changes,
+  and behavioral directives (Always/Never). Routes each finding to the optimal storage
+  tier: MEMORY.md, skill files, reference files, or Chronicle KG. Compacts MEMORY.md
+  by routing entries to the correct tier. Part of the OCAS System Evolution Layer
+  alongside Mentor, Fellow, and Forge. NOT for real-time behavioral adaptation, skill
+  evaluation, or skill creation.'
 includes:
 - references/**
+- scripts/**
+license: MIT
 metadata:
   author: Indigo Karasu (indigokarasu)
   version: 2.15.0
+name: ocas-finch
+source: https://github.com/indigokarasu/finch
 tags:
 - self-improvement
 - session-mining
@@ -216,6 +223,17 @@ After tier routing, MEMORY.md should contain **only Tier 1 knowledge** — behav
 **Symptom of violation:** MEMORY.md grows back to 2,000+ chars after compaction because pointers were added for every routed entry.
 **Fix:** Remove all pointers. MEMORY.md should be under 500 chars for a well-compacted library.
 
+### Directive consolidation pattern
+
+When two directives share the same underlying principle, merge them into one entry with combined provenance. This reduces MEMORY.md bloat and strengthens the surviving entry by showing it was reinforced across multiple sessions.
+
+**Example from 2026-06-21:**
+- "NEVER assume MCP broken without testing — verify first" (Jun 12)
+- "NEVER state a wrong diagnosis with certainty — test simplest hypothesis first" (Jun 20)
+- → Merged: "NEVER state a wrong diagnosis with certainty — test simplest hypothesis first. Verify before concluding." (Jun 12, Jun 20)
+
+**Rule:** When merging, keep the more specific/vivid phrasing and list both dates. The merged entry is stronger because it was reinforced across sessions.
+
 ### FTS5 minimum token length
 
 When mining sessions via `session_search` with `query=`, FTS5 silently drops tokens shorter than its minimum length (typically 3-4 characters). This means short-form correction signals are **invisible** to FTS5 queries:
@@ -297,8 +315,15 @@ There are two `evals.json` files: `evals.json` (root) and `evals/evals.json` (su
 The memory guard's `LOW_PRIORITY_REFILE` regex and eviction sort order can evict Methodologies entries while keeping bare Course Changes entries. This is wrong — Methodologies (actionable techniques) are higher value than Course Changes (historical pivots).
 
 **Symptom:** After guard runs, Methodologies section is empty but Course Changes still has entries.
-**Workaround:** After guard runs, check if Methodologies were evicted. If so, restore the highest-value ones by consolidating Course Changes entries to make room.
-**Fix needed:** The guard's eviction sort should rank: Directives > Corrections > Methodologies > Course Changes > Pointers. Currently Methodologies and Course Changes are both in the "non-directive" bucket with no differentiation. Enforces hard cap, protects Always/Never directives, strips pointer anti-patterns, writes atomically under PID lock.
+**Confirmed:** 2026-06-21 — guard evicted "Root-cause-first debugging" (Methodologies) while keeping "Seamless task-switching" and "Budget exhaustion" (Course Changes).
+
+**Mandatory post-guard verification (Step 7.5):**
+After every guard run, BEFORE writing the final MEMORY.md:
+1. Check if any Methodologies entries were evicted
+2. If yes: restore the highest-value Methodologies entries by consolidating or removing Course Changes entries to make room
+3. Never leave MEMORY.md with Course Changes intact but Methodologies empty — this inverts the priority ordering
+
+**Fix needed in guard:** The guard's eviction sort should rank: Directives > Corrections > Methodologies > Course Changes > Pointers. Currently Methodologies and Course Changes are both in the "non-directive" bucket with no differentiation. Until the guard is fixed, the manual Step 7.5 workaround is MANDATORY.
 
 ```bash
 # Dry-run report
