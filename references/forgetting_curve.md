@@ -28,6 +28,18 @@ Use this to determine which tier an entry belongs to:
 - **"URL/path/config for X"** → Tier 3 (reference) — look-up-able detail, belongs in references/ or a skill's references/
 - **"Entity X has property Y"** → Tier 4 (Chronicle) — factual knowledge, belongs in the knowledge graph
 
+### Known directive-to-skill routes
+
+When the following directives appear in MEMORY.md, route them to the specified skill during compaction:
+
+| Directive pattern | Target skill | Reason |
+|-------------------|-------------|--------|
+| Weave/Google Contacts sync rules | `ocas-weave` | Contact management is Weave's domain |
+| "Never create workflow docs for API endpoints" | `api-integration` | API documentation governance |
+| "Never skip tests during dev" | `test-driven-development` or `software-development` | Testing practice belongs in dev skills |
+| "Never assume MCP broken without testing" | Consolidate into "verify before diagnosing" in MEMORY.md | Cross-cutting, but merge with existing correction |
+| "Check tool defs before concluding" | Consolidate into "read actual code before diagnosing" in MEMORY.md | Cross-cutting, but merge with existing principle |
+
 ### Tier routing during compaction
 
 When an entry is classified as Decaying or Stable, **do not default to eviction**.

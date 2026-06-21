@@ -228,6 +228,41 @@ When mining sessions via `session_search` with `query=`, FTS5 silently drops tok
 
 This applies to all finch jobs that mine sessions: finch:daily, finch:weekly, and manual finch.mine runs.
 
+### Session source filtering — cron-skew problem
+
+When `session_search` is called without a source filter, the results are overwhelmingly cron sessions (health monitors, heartbeats, dispatcher runs). These contain **zero** user-facing behavioral signals. Interactive sessions (where corrections, directives, and preferences live) are a small fraction of total sessions.
+
+**Mining procedure — ALWAYS do this:**
+1. First call: `session_search(limit=20, sort='newest')` — identify which sessions are interactive (source=telegram/web) vs cron
+2. Second calls: `session_search(session_id='<interactive_session_id>', role_filter='user', window=20)` — read actual user messages from interactive sessions only
+3. Only mine cron sessions for system-health signals (job failures, errors), never for behavioral signals
+4. If no interactive sessions exist in the mining window, report "no interactive sessions — nothing to mine" rather than mining cron noise
+
+**Confirmed pattern:** As of June 2026, a typical 24h window contains 50+ cron sessions and 0-3 interactive sessions. Mining without source filtering wastes the entire pass on cron noise.
+
+### HERMES_HOME path resolution in scripts
+
+When writing Python scripts that reference MEMORY.md or commons directories, never hardcode `~/.hermes/MEMORY.md`. The `HERMES_HOME` env var may point to either `~/.hermes` or `~/.hermes/profiles/<name>`. Use this pattern:
+
+```python
+HERMES_HOME = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes")))
+_HERMES_PROFILE = os.getenv("HERMES_PROFILE", "indigo")
+# Handle three cases: (1) HERMES_HOME already IS the profile dir, (2) standard layout with profiles/ subdir, (3) fallback
+if HERMES_HOME.name == _HERMES_PROFILE and (HERMES_HOME / "MEMORY.md").exists():
+    PROFILE_HOME = HERMES_HOME
+elif HERMES_HOME.name != "profiles" and (HERMES_HOME / "profiles" / _HERMES_PROFILE).is_dir():
+    PROFILE_HOME = HERMES_HOME / "profiles" / _HERMES_PROFILE
+else:
+    PROFILE_HOME = HERMES_HOME
+MEMORY_FILE = PROFILE_HOME / "MEMORY.md"
+```
+
+**Gotcha**: The old two-branch logic (`name != "profiles"`) fails when `HERMES_HOME` is already the profile directory (name is e.g. `"indigo"`, not `"profiles"`), causing double-nesting to `profiles/indigo/profiles/indigo/MEMORY.md`. Fixed in `scripts/memory_guard.py` as of 2026-06-21.
+
+### Two evals.json files must be kept in sync
+
+There are two `evals.json` files: `evals.json` (root) and `evals/evals.json` (subdirectory). Both must be updated when adding/removing test cases. The root one is the canonical reference.
+
 ## Support File Map
 
 | File | When to read |
@@ -246,12 +281,57 @@ This applies to all finch jobs that mine sessions: finch:daily, finch:weekly, an
 | `references/anti-patterns.md` | Before any finch operation — 10 anti-patterns including declaration of victory and code fence pitfalls |
 | `references/okrs.md` | During OKR evaluation |
 | `references/storage-layout.md` | When inspecting data directories or skill package structure |
-| `references/forgetting_curve.md` | During MEMORY.md compaction — reinforcement scan, tier routing, consolidation, eviction |
-| `references/file-governance.md` | Before routing findings — write targets, tier model, off-limits files, creation criteria |
-| `references/signal-triage-before-fix.md` | Before executing any finch:work task — decompose multi-failure tasks into distinct root causes |
-| `references/custodian-error-investigation.md` | When a finch:work task involves a custodian error (e.g., custodian:deep Broken pipe) — investigation pattern for journal files and issues.jsonl |
-| `references/signal-types-table.md` | Before mining — signal type definitions and routing |
-| `references/interactive-menu.md` | When invoked interactively via `/` command — two-level menu layout, Clarify timeout, response parsing, platform adaptation |
+|| `references/forgetting_curve.md` | During MEMORY.md compaction — reinforcement scan, tier routing, consolidation, eviction ||
+|| `references/file-governance.md` | Before routing findings — write targets, tier model, off-limits files, creation criteria ||
+|| `references/signal-triage-before-fix.md` | Before executing any finch:work task — decompose multi-failure tasks into distinct root causes ||
+|| `references/custodian-error-investigation.md` | When a finch:work task involves a custodian error (e.g., custodian:deep Broken pipe) — investigation pattern for journal files and issues.jsonl ||
+|| `references/signal-types-table.md` | Before mining — signal type definitions and routing ||
+|| `references/interactive-menu.md` | When invoked interactively via `/` command — two-level menu layout, Clarify timeout, response parsing, platform adaptation ||
+|| `scripts/memory_guard.py` | Deterministic safety floor for MEMORY.md — hard cap enforcement, directive protection, pointer stripping, atomic locked write. Run as final step of finch.compact or via finch:memory-guard-floor cron. ||
+|| `scripts/memory_state.py` | Persisted reinforcement-state store — entry-key -> {reinforcement_count, last_reinforced_at, half_life, tier}. Use `reinforce`, `check`, `route`, `decay-report` subcommands. ||
+
+## Scripts
+
+### memory_guard.py eviction priority — Methodologies outrank Course Changes
+
+The memory guard's `LOW_PRIORITY_REFILE` regex and eviction sort order can evict Methodologies entries while keeping bare Course Changes entries. This is wrong — Methodologies (actionable techniques) are higher value than Course Changes (historical pivots).
+
+**Symptom:** After guard runs, Methodologies section is empty but Course Changes still has entries.
+**Workaround:** After guard runs, check if Methodologies were evicted. If so, restore the highest-value ones by consolidating Course Changes entries to make room.
+**Fix needed:** The guard's eviction sort should rank: Directives > Corrections > Methodologies > Course Changes > Pointers. Currently Methodologies and Course Changes are both in the "non-directive" bucket with no differentiation. Enforces hard cap, protects Always/Never directives, strips pointer anti-patterns, writes atomically under PID lock.
+
+```bash
+# Dry-run report
+python3 scripts/memory_guard.py
+
+# Enforce + safe-write
+python3 scripts/memory_guard.py --apply --emit-decision
+
+# JSON output
+python3 scripts/memory_guard.py --json
+```
+
+Run as Step 7 of `finch.compact` or independently via `finch:memory-guard-floor` cron (every 6h).
+
+### memory_state.py
+
+Persisted reinforcement-state store. Computes Ebbinghaus forgetting curve across runs.
+
+```bash
+# Record a reinforcement
+python3 scripts/memory_state.py reinforce "entry text" --tier 1
+
+# Check decay status
+python3 scripts/memory_state.py check "entry text"
+
+# Transactional tier-routing (verify dest before removing from MEMORY.md)
+python3 scripts/memory_state.py route "entry text" --to-tier 2 --dest-path path/to/skill/references/foo.md
+
+# Full decay report (decaying entries first)
+python3 scripts/memory_state.py decay-report
+```
+
+State stored at `commons/data/ocas-finch/memory_state.json`.
 
 ## Self-update
 

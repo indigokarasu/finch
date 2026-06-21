@@ -69,25 +69,40 @@ NEVER create a task that asks the work agent to violate its governing skill's ru
 
 ## Task List Schema
 
+> **NOTE (2026-06-20):** The actual `task-list.json` file on disk uses a slightly different schema than what was originally documented below. The file is ground truth — update this doc to match the file, not vice versa.
+
+### Actual schema (as of 2026-06-20)
+
 ```json
 {
-  "items": [
+  "version": 1,
+  "scan_time": "2026-06-19T20:00:00Z",
+  "total_jobs": "N/A",
+  "error_jobs": "N/A",
+  "healthy_jobs": "N/A",
+  "notes": "Free-text summary of scan findings",
+  "tasks": [
     {
       "id": "unique-slug",
       "title": "Short description",
-      "priority": 9,
+      "description": "Full context for the work agent",
+      "severity": "medium",
       "status": "pending",
-      "governed_by": "ocas-dispatch",
-      "description": "Full context for the work agent including what was found and what action to take",
       "source": "email",
-      "created": "2026-05-17T15:00:00Z",
-      "completed": null
+      "created_at": "2026-06-19T20:00:00Z",
+      "last_seen": "2026-06-19T20:00:00Z",
+      "note": "Additional context or action hints"
     }
-  ],
-  "refreshed": "2026-05-17T15:00:00Z",
-  "done_count": 0
+  ]
 }
 ```
+
+Key differences from original doc:
+- Top-level: `tasks` (not `items`), no `refreshed`/`done_count`
+- Per-task: `severity` (not `priority`), `created_at`/`last_seen` (not `created`/`completed`), no `governed_by`
+- Status values: `pending`, `in_progress`, `done`, `cancelled`, `blocked`, `needs_review`
+
+### Original documented schema (superseded)
 
 ## Superseded: Delegation Pattern
 

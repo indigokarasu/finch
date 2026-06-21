@@ -27,15 +27,28 @@
 
 - **`read_file` output format contaminates file writes**: The `read_file` tool prefixes every line with `LINE_NUM|`. Always strip with `re.sub(r'^\d+\|', '', content, flags=re.MULTILINE)` before parsing as JSON.
 
-- **finch:work task-list.json is NOT valid JSON on disk**: Every line has a `LINE_NUM|` prefix (e.g. `42|  "key": "value"`). This is the actual file content, not a display artifact. `patch` will always fail on this file — "Found N matches" or escape-drift. Use `sed -i` via `terminal()` for targeted updates. For full rewrites, use Python heredoc: strip prefixes -> `json.loads()` -> modify -> `json.dump()` -> re-add prefixes. Never use `patch` on task-list.json.
+- **finch:work task-list.json format**: As of 2026-06-20, the file on disk is clean JSON without embedded `LINE_NUM|` prefixes. The `read_file` tool adds prefixes as a display artifact. `json.dump()` via `terminal()` writes clean JSON correctly. The old pitfall claiming "every line has a LINE_NUM| prefix as actual file content" was a misreading of `read_file`'s display format. `patch` may still fail on this file due to fuzzy matching issues — prefer Python heredoc for targeted updates.
 
 - **finch:interactive clarify timeout**: When the user doesn't respond within the time limit, default to `run` (full daily pipeline). Log the choice in evidence.jsonl. Do NOT re-prompt.
 
 ## finch:work Cron Tool Constraints
 
 - **`execute_code` is categorically blocked in cron**: Use `terminal()` for all Python operations.
-- **`write_file` works in cron**: Unlike general warnings, `write_file` works correctly in finch:work cron context.
-- **`read_file` on JSON in cron**: Use `terminal('cat path')` -> `json.loads()` in Python for clean content.
+- **`write_file` on `task-list.json` in cron**: `write_file` writes clean JSON to disk. As of 2026-06-20, the file on disk is clean JSON without embedded `LINE_NUM|` prefixes. The `read_file` tool adds `LINE_NUM|` prefixes as a display artifact — this does NOT mean the file on disk has them. **When in doubt, use `terminal('python3 -c "import json; json.load(open(\\'path\\'))"')` to validate the file is parseable JSON.** If valid, `write_file` and `json.dump()` via `terminal()` are both safe. The old pitfall claiming "every line has a LINE_NUM| prefix as actual file content" is outdated — it was a misreading of `read_file`'s display format.
+
+- **`read_file` on structured files in cron**: The `read_file` tool wraps ALL file content (not just task-list.json) in a JSON structure with `LINE_NUM|` prefixes and metadata fields (`content`, `total_lines`, `file_size`, etc.). This is a display/transport artifact. Strip with `re.sub(r'^\d+\|', '', raw, flags=re.MULTILINE)` before parsing as JSON or using the content programmatically.
+
+- **`read_file` on JSON in cron**: Strip `LINE_NUM|` prefixes before parsing. Use `terminal('python3 -c "import json; print(json.dumps(json.load(open(\\'path\\')),indent=2))"')` for clean round-trip.
+
+## Task List Schema Drift
+
+- **Documented vs actual schema mismatch**: `scan-work-architecture.md` documents fields like `items`, `priority`, `governed_by`, `created`, `completed`, `refreshed`, `done_count`. The actual `task-list.json` uses `tasks`, `severity` (not `priority`), no `governed_by`, `created_at`/`last_seen` (not `created`/`completed`), and no `refreshed`/`done_count` top-level fields. **When the architecture doc and the file disagree, the file is ground truth.** Do not attempt to "fix" the file to match the doc — update the doc instead.
+
+- **Missing `governed_by` field**: Tasks in the current list do not carry a `governed_by` field. The work job must infer the governing skill from the task's `source` and `description`. This is imprecise. When creating new tasks, consider adding `governed_by` to make the work job's skill selection deterministic.
+
+## memory_guard.py Path Resolution
+
+- **`HERMES_HOME` double-nesting bug**: When `HERMES_HOME` is already set to the profile directory (e.g., `/root/.hermes/profiles/indigo`), the script's own path-resolution logic appends `profiles/<profile>` again, producing `/root/.hermes/profiles/indigo/profiles/indigo/MEMORY.md`. The script checks `HERMES_HOME.name != "profiles"` but the profile dir's name is the profile name (e.g., `"indigo"`), not `"profiles"`, so the guard fails. **Workaround**: Always pass `--file /root/.hermes/profiles/indigo/MEMORY.md` explicitly when running the script. **Fix needed**: The script should also check if `HERMES_HOME` already ends with the profile name and skip re-appending.
 
 ## Cron System Diagnostics
 
