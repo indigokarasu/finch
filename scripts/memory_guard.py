@@ -128,7 +128,7 @@ def emit_decision(report):
         "description": "MEMORY.md guard %d->%d chars; stripped %d pointer(s); evicted %d line(s)" % (
             report["original_size"], report["final_size"],
             len(report["pointers_stripped"]), len(report["evicted"])),
-        "outcome": "applied" if report["applied"] else "dry_run",
+        "outcome": "no_op" if report.get("idempotent_noop") else ("applied" if report["applied"] else "dry_run"),
         "over_cap_after": report["final_size"] > HARD_CAP,
         "confidence": "high",
     }
@@ -246,7 +246,12 @@ def main():
         print("   -", a)
     for w in report["warnings"]:
         print("   ! ", w)
-    print("  APPLIED" if report.get("applied") else "  dry-run (use --apply to write)")
+    if report.get("applied"):
+        print("  APPLIED")
+    elif report.get("idempotent_noop"):
+        print("  NO-OP (already compliant; --apply passed, nothing to write)")
+    else:
+        print("  dry-run (use --apply to write)")
 
 
 if __name__ == "__main__":

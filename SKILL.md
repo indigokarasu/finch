@@ -35,14 +35,7 @@ triggers:
 
 # ocas-finch
 
-Finch is the OCAS System Evolution Layer's self-improvement orchestrator. It operates as four pure-LLM cron jobs:
-
-- **finch:scan** (every 2h) — Scans 7 signal sources, validates existing tasks, maintains prioritized task list
-- **finch:work** (every 30 min) — Picks top pending task, loads governing skill, executes one task per run
-- **finch:daily** (daily 6am PT) — Mines 24h of sessions, compacts MEMORY.md, auto-applies low-risk findings
-- **finch:weekly** (Sunday 8am PT) — Mines 7d, full pipeline with SOUL.md/USER.md recommendations
-
-All four jobs are pure LLM cron prompts. No Python scripts at runtime. Deprecated scripts are in `archive/`.
+Finch is the OCAS System Evolution Layer's self-improvement orchestrator. It runs as a set of cron jobs — see **Manual run & verification** below for the actual deployed job set (the design doc's `finch:work` is not currently a separate deployed cron). Jobs are primarily pure-LLM cron prompts, plus one `no_agent` script floor (`finch:floor`). Deprecated scripts are in `archive/`.
 
 **Signal sources (7)**: cron health, email, calendar, sessions, Drive, kanban, system. See `references/scan-work-architecture.md` for the full table.
 
@@ -82,6 +75,7 @@ See `references/storage-layout.md` for the full directory tree and skill package
 - **MCP tools are now reachable in cron via Composio**: The old guidance said `mcp_google_workspace_*` tools are completely unreachable in cron context. **Updated 2026-06-30**: This is no longer true. The `COMPOSIO_MULTI_EXECUTE_TOOL` and `COMPOSIO_SEARCH_TOOLS` meta-tools work in cron context and can call Google Calendar and Drive tools directly. Gmail may fail if the toolkit has no active OAuth connection — check `has_active_connection` in the search response. Calendar and Drive have active connections as of 2026-06-30. Use these tools in their own batch (they use a different backend than `terminal`/`read_file` calls). **Do NOT skip email/calendar/drive as a blanket rule — attempt them first and only skip on connection failure.**
 - **Stale errors from `hermes cron list`**: The text output of `hermes cron list` shows the full history of each job. A job that failed at 14:00 but recovered at 15:00 will still show the error line. **`grep -B1 "error:"` matches these stale errors, inflating the error count.** Always verify the `Last run:` timestamp is from the latest run before counting an error as active. If the last run shows `ok`, the error is stale and should not be counted or reported. Observed 2026-06-13: 9 grep hits but only 3 were actual transient errors; the rest had already recovered. Create tasks only for persistent issues that won't self-resolve.
 - **Sessions scan — date-string workaround**: When recent sessions don't appear with `query="last 24h"` (FTS5 limitation), use `query="YYYY-MM-DD"` for today's date. This matches timestamps in session IDs and reliably returns recent sessions. Confirmed 2026-06-28: `query="last 24h"` returned sessions from June 20; `query="2026-06-28"` returned today's actual sessions.
+- **Mining interactive session messages — session_search scroll is unreliable; use direct SQL.** Scroll mode (`session_id` + `around_message_id`) fails with `around_message_id N not in session_id` because message IDs are global, not per-session sequential. To mine user messages from interactive (non-cron) sessions, query `state.db` directly: `sqlite3 /root/.hermes/profiles/indigo/state.db` → tables `sessions(id, source, started_at, title, message_count)` + `messages(session_id, role, content, timestamp)`. Filter `source != 'cron'` and `started_at >= (now_unix - 7*86400)`, then pull `role='user'` rows and keyword-scan. This is the reliable path (used by weekly-0831 and weekly-0858 runs). Browse-mode `session_search` returns only session listings, not message bodies.
 - **Only report actual fixes, never stale/transient issues**: User explicitly stated: do not report transient errors, already-recovered jobs, or stale errors. If nothing was actually fixed or changed, say "Nothing new" and stop. Reporting noise wastes the user's time. **Interpreter-shutdown errors are always transient** — they self-resolve on the next scheduled run. Never create HIGH priority investigation tasks for them. See `references/scan-error-classification.md`.
 - **Never force model overrides on cron jobs**: Only `openrouter/owl-alpha` is available. If a job's output is too large and truncated, fix the prompt to be more concise — never pin a different model in the cron job config.
 - **Maintain a skill index**: Build and maintain `~/.hermes/profiles/indigo/references/skill-index.md` listing all skills and their GitHub repos. Refer to it instead of re-deriving from scratch every time. After any skill file modifications, commit and push to the source repo immediately.
@@ -95,7 +89,7 @@ See `references/storage-layout.md` for the full directory tree and skill package
 - **Missing-script errors need path verification, not just debugging**: When a cron job's `Script:` field points to a file that doesn't exist (`[Errno 2] No such file or directory`), the fix is to update the cron's script path to the correct file — not to debug the script itself. List the actual scripts in the skill's `scripts/` directory to find the correct path. This is a 30-second fix (update cron config) vs. hours of debugging. Confirmed 2026-06-29: `email:check` cron pointed to `email_check.py` which never existed; actual scripts were `gmail_scan.py` and `check_unread.py`.
 - **finch:work tasks referencing removed cron jobs**: When a task names a cron job that no longer exists (deleted, not just disabled), verify with `hermes cron list` AND `jobs.json` before concluding the task is actionable. If the job is absent from both and its function is covered by an active pipeline, mark the task done as stale. See `references/stale-cron-task-detection.md`.
 - **finch:scan is NOT a task executor**: The scan job only observes and reports. It does not fix cron jobs, install packages, or send emails. Creating tasks is the output — execution belongs to finch:work or the user. Confirmed 2026-06-28: scan correctly identified 4 errors but did not attempt to fix them.
-- **`read_file` tilde expansion path doubling**: In profile cron context, `read_file(path="~/.hermes/MEMORY.md")` resolves to a doubled non-existent path (`/root/.hermes/profiles/indigo/home/.hermes/MEMORY.md`). Always use absolute paths in cron jobs — `/root/.hermes/profiles/indigo/MEMORY.md`.
+**read_file tilde expansion path doubling**: In profile cron context, `read_file(path="~/.hermes/MEMORY.md")` resolves to a doubled non-existent path (`/root/.hermes/profiles/indigo/home/.hermes/MEMORY.md`). Always use absolute paths. The canonical finch-managed memory for the indigo profile is `/root/.hermes/profiles/indigo/memories/MEMORY.md` (note the `/memories/` subdir — `/root/.hermes/profiles/indigo/MEMORY.md` does NOT exist). `/root/.hermes/MEMORY.md` is the DEFAULT profile's memory; do NOT edit it from an indigo-profile run (cross-profile guard). The finch HARD RULE references `memory_guard.py --file ~/.hermes/profiles/indigo/memories/MEMORY.md` — that path is authoritative.
 - **`jobs.json` field types — dicts vs strings**: Some job object fields like `schedule` are `dict` type (`{"kind": "cron", "expr": "*/5 * * * *"}`), not strings. Applying string operations like `[:30]` directly to a dict raises `TypeError: unhashable type: 'slice'`. Always coerce with `str()` before slicing: `str(j.get('schedule', '?'))[:30]`.
 - **Gateway RSS growth tracking**: The hermes gateway process RSS can grow significantly over days. When reporting system health in scan journals, always note the gateway RSS and compare to prior scans. A 3x increase (e.g., 538MB → 1.5GB in one day) is notable — flag it in the scan summary as "elevated, trending up" even if not yet actionable. Only escalate to MEDIOUS if it exceeds 2GB or causes OOM pressure. **Confirmed 2026-06-30**: Gateway RSS grew from 538MB → 1.5GB between consecutive 2h scans.
 - **consecutive_failures is the ONLY reliable error gate — confirmed 2026-06-30**: A job with `last_error` set to a non-null string but `consecutive_failures: 0` has ALREADY RECOVERED. The error string persists as a stale artifact from a previous run. **Never create a CRITICAL or HIGH task based on `last_error` alone without checking `consecutive_failures > 0`.** Scan #13 (2026-06-30 03:00Z) misdiagnosed 3 transient LLM provider HTTP 400/429 errors (all `consecutive_failures: 0`) as "Google OAuth revoked," creating task_019 + task_014 that blocked email/calendar/drive scrutiny for 24h. Scan #14 (03:33Z) discovered all 140 jobs were healthy and the tasks were stale. gate: filter `consecutive_failures > 0` BEFORE classifying errors. If 0 jobs have consec > 0, report "all clear" and do not create error tasks.** See `references/scan-error-classification.md` § "CRITICAL RULE: consecutive_failures gates task creation."
@@ -281,6 +275,27 @@ MEMORY.md entries decay without reinforcement. During compaction:
 See `references/forgetting_curve.md` for the full compaction algorithm including the tier routing procedure.
 
 See `references/scan-work-architecture.md` for signal source details and governance rules.
+
+## Manual run & verification (when the user says "run finch")
+
+"Run finch" means verify ALL deployed finch cron jobs are healthy and (optionally) force a run. The deployed job set (2026-07-07) is **FIVE jobs**, not the four in the design doc:
+
+- **`finch`** — profile-root MEMORY.md compaction (runs `memory_guard.py` on the DEFAULT profile's MEMORY.md — NOT the indigo profile's; guard the `--file` override or it compacts the wrong memory).
+- **`finch:floor`** — `no_agent` script safety floor (memory guard). Normally `enabled: false` but self-triggers; do NOT treat its disabled state as broken.
+- **`finch:scan`** — every 2h, pure LLM.
+- **`ocas-finch:daily`** — daily 6am PT, pure LLM.
+- **`ocas-finch:weekly`** — Sunday 8am PT, pure LLM.
+
+(NOTE: the design doc lists `finch:work` every 30min — that job was NOT present in deployment on 2026-07-07. Work execution is covered by the interactive `finch.work` command / `finch:scan`-driven task list, not a separate cron. Verify with `cronjob list` before assuming job names, since they drift.)
+
+### Forcing an immediate run
+`cronjob action='run'` does NOT force a scheduled **LLM** job to execute — it only bumps `next_run_at` to the next NATURAL tick (the job fires on its normal schedule, not immediately). To force execution NOW: **PAUSE the job first (`action='pause'`), then `run` (`action='run'`)** — the paused state triggers forced execution. `no_agent`/script jobs (e.g. `finch`, `finch:floor`) run on a plain `run` without pausing. After a forced run succeeds, the job returns to `state: scheduled` automatically.
+
+### Mass 401 across finch (and other) jobs
+If multiple finch jobs error with `401`, the cause is usually NOT model routing — it is a **stale `[mcp_servers]` block in the profile `.env`** (`/root/.hermes/profiles/<p>/.env`) shipping an invalid/expired token (e.g. a dead Discord token) that breaks ALL MCP calls (github MCP included), not just the failing job's domain. Fix: remove the `[mcp_servers]` section; the client falls back to valid config and MCP works. See `cron-job-repair` for the model-routing 401 vs MCP-auth 401 distinction.
+
+### Autonomy — take the action without being prompted
+When a finch job (or any cron job) is failing and the fix is clear, DO NOT ask "continue?" or wait for the user to "say the word." Apply the fix, run all affected jobs, then report results in one message. The user explicitly requires the agent to take the needed action without prompting (stated 2026-07-07: "I shouldn't have to 'say the word' you should just take action that needs to be taken").
 
 ## Commands
 

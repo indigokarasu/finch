@@ -72,7 +72,7 @@ When the refresh token is confirmed dead, generate the auth URL so the user can 
 ```
 https://accounts.google.com/o/oauth2/v2/auth
   ?client_id=<GOOGLE_OAUTH_CLIENT_ID>.apps.googleusercontent.com
-  &redirect_uri=http://76.13.109.67:8002/oauth2callback
+  &redirect_uri=http://<HOST>:<PORT>/oauth2callback
   &response_type=code
   &scope=<url-encoded space-separated scopes>
   &access_type=offline
