@@ -1,4 +1,5 @@
 ---
+license: MIT
 description: 'OCAS self-improvement orchestrator (Darwin''s finch — adaptive evolution).
   Mines session JSONL files to detect corrections, breakthroughs, methodologies, course-changes,
   and behavioral directives (Always/Never). Routes each finding to the optimal storage
@@ -9,10 +10,9 @@ description: 'OCAS self-improvement orchestrator (Darwin''s finch — adaptive e
 includes:
 - references/**
 - scripts/**
-license: MIT
 metadata:
   author: Indigo Karasu (indigokarasu)
-  version: 2.15.0
+  version: 2.15.3
 name: ocas-finch
 source: https://github.com/indigokarasu/finch
 tags:
@@ -26,18 +26,25 @@ triggers:
 - behavioral adaptation
 - skill evolution
 - correction detection
+- health scan
+- finch scan
+- system health
+- cron errors
+- task list
 ---
 
 # ocas-finch
 
 Finch is the OCAS System Evolution Layer's self-improvement orchestrator. It operates as four pure-LLM cron jobs:
 
-- **finch:scan** (every 2h) — Scans 6 signal sources, validates existing tasks, maintains prioritized task list
+- **finch:scan** (every 2h) — Scans 7 signal sources, validates existing tasks, maintains prioritized task list
 - **finch:work** (every 30 min) — Picks top pending task, loads governing skill, executes one task per run
 - **finch:daily** (daily 6am PT) — Mines 24h of sessions, compacts MEMORY.md, auto-applies low-risk findings
 - **finch:weekly** (Sunday 8am PT) — Mines 7d, full pipeline with SOUL.md/USER.md recommendations
 
 All four jobs are pure LLM cron prompts. No Python scripts at runtime. Deprecated scripts are in `archive/`.
+
+**Signal sources (7)**: cron health, email, calendar, sessions, Drive, kanban, system. See `references/scan-work-architecture.md` for the full table.
 
 
 ## Interactive Menu
@@ -60,10 +67,10 @@ ocas-finch does not own: trigger detection, session management, or cross-skill o
 
 ## When NOT to Use
 
-- Real-time behavioral adaptation (Corvus handles pattern detection)
+- Real-time behavioral adaptation (Chronicle handles pattern detection)
 - Skill evaluation scoring (Mentor handles OKR evaluation)
 - Skill creation/architecting (Forge handles skill building)
-- Entity identity resolution (Elephas handles Chronicle writes)
+- Entity identity resolution (Chronicle tools handle direct writes)
 
 ## Storage
 
@@ -71,15 +78,27 @@ See `references/storage-layout.md` for the full directory tree and skill package
 
 ## Scanning Gotchas
 
-- **Verify tool availability before parallel batches**: When finch:scan calls multiple tools in parallel, one invalid tool name poisons the entire batch — ALL calls return "Skipped" with no partial results. Always verify tool names exist before batching. The `cronjob` tool does NOT exist in all session profiles. Use `search_files` or `terminal` to inspect cron state when unavailable.
+- **Verify tool availability before parallel batches**: When finch:scan calls multiple tools in parallel, one invalid tool name poisons the entire batch — ALL calls return "Skipped" with no partial results. Always verify tool names exist before batching. The `cronjob` tool does NOT exist in all session profiles. Use `search_files` or `terminal` to inspect cron state when unavailable. **Updated 2026-06-30**: The old guidance said `mcp_google_workspace_*` tools are unreachable in cron. This is now WRONG — Composio tools (`GMAIL_FETCH_EMAILS`, `GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS`, `GOOGLEDRIVE_FIND_FILE`) work in cron context via `COMPOSIO_MULTI_EXECUTE_TOOL`. The Gmail toolkit may lack an active connection (no OAuth), but Calendar and Drive are functional. Always attempt these tools first — only skip if the toolkit connection is inactive, not as a blanket rule.
+- **MCP tools are now reachable in cron via Composio**: The old guidance said `mcp_google_workspace_*` tools are completely unreachable in cron context. **Updated 2026-06-30**: This is no longer true. The `COMPOSIO_MULTI_EXECUTE_TOOL` and `COMPOSIO_SEARCH_TOOLS` meta-tools work in cron context and can call Google Calendar and Drive tools directly. Gmail may fail if the toolkit has no active OAuth connection — check `has_active_connection` in the search response. Calendar and Drive have active connections as of 2026-06-30. Use these tools in their own batch (they use a different backend than `terminal`/`read_file` calls). **Do NOT skip email/calendar/drive as a blanket rule — attempt them first and only skip on connection failure.**
 - **Stale errors from `hermes cron list`**: The text output of `hermes cron list` shows the full history of each job. A job that failed at 14:00 but recovered at 15:00 will still show the error line. **`grep -B1 "error:"` matches these stale errors, inflating the error count.** Always verify the `Last run:` timestamp is from the latest run before counting an error as active. If the last run shows `ok`, the error is stale and should not be counted or reported. Observed 2026-06-13: 9 grep hits but only 3 were actual transient errors; the rest had already recovered. Create tasks only for persistent issues that won't self-resolve.
-- **Only report actual fixes, never stale/transient issues**: User explicitly stated: do NOT report transient errors, already-recovered jobs, or stale errors. If nothing was actually fixed or changed, say "Nothing new" and stop. Reporting noise wastes the user's time.
+- **Sessions scan — date-string workaround**: When recent sessions don't appear with `query="last 24h"` (FTS5 limitation), use `query="YYYY-MM-DD"` for today's date. This matches timestamps in session IDs and reliably returns recent sessions. Confirmed 2026-06-28: `query="last 24h"` returned sessions from June 20; `query="2026-06-28"` returned today's actual sessions.
+- **Only report actual fixes, never stale/transient issues**: User explicitly stated: do not report transient errors, already-recovered jobs, or stale errors. If nothing was actually fixed or changed, say "Nothing new" and stop. Reporting noise wastes the user's time. **Interpreter-shutdown errors are always transient** — they self-resolve on the next scheduled run. Never create HIGH priority investigation tasks for them. See `references/scan-error-classification.md`.
 - **Never force model overrides on cron jobs**: Only `openrouter/owl-alpha` is available. If a job's output is too large and truncated, fix the prompt to be more concise — never pin a different model in the cron job config.
 - **Maintain a skill index**: Build and maintain `~/.hermes/profiles/indigo/references/skill-index.md` listing all skills and their GitHub repos. Refer to it instead of re-deriving from scratch every time. After any skill file modifications, commit and push to the source repo immediately.
 - **Push local changes to GitHub (MANDATORY — user directive)**: After modifying any skill file (SKILL.md, references/, scripts/), **always** commit and push to the source repo immediately after testing and code verification. `git add -A && git commit -m "sync" && git push origin main` (or `--force` if remote diverged). **Do not wait for the user to ask.** This is an explicit user directive ("ALWAYS... automatically push and merge... Do not wait for the user to ask"). Never leave local changes uncommitted.
 - **Disk-before-auth diagnostic**: When ALL Google MCP services fail simultaneously, first check `df -h /`. ENOSPC produces errors that look like auth failures. Do not generate auth URLs or ask user to re-auth while disk is full. See `references/session-2026-05-31-disk-recovery.md`.
-- **`execute_code` is BLOCKED in cron jobs**: This tool is denied during cron execution. Use `terminal()` directly for all operations in cron context. For task-list.json updates specifically: use `terminal(command='python3 << PYEOF ...')` to read the file with `json.load()`, modify the dict in memory, and write back with `json.dump()`. Do NOT use `read_file` for structured files — it wraps content in a JSON structure with line-number prefixes (`1|`, `2|`, ...) that corrupt the data if passed through. See `references/pitfalls.md` for the full pattern.
-- **`jobs.json` for cron health**: When the `cronjob` tool is unavailable in cron context, read `~/.hermes/cron/jobs.json` directly. Parse with `json.load()` and filter on `last_error=None` vs set — `consecutive_failures > 0` alone is not evidence of active errors.
+- **`execute_code` in cron jobs**: While previously restricted, `execute_code` can now be used in cron jobs to run Python scripts that directly access files using standard `open()` calls. This avoids the line-number prefix issue from the `read_file` tool. For task-list.json updates: use `execute_code` to read the file with `open()`, parse/modify the JSON in Python, then write it back with `open()`. If using `read_file`, remember to strip line-number prefixes (`1|`, `2|`, ...) before parsing JSON. See `references/pitfalls.md` for additional patterns.
+- **Concurrent-write hazard on task-list.json**: When `write_file` warns that a sibling subagent modified the file, do NOT overwrite. Read the current state first, merge your changes, then write. If the file contains JSON corruption from a concurrent write, use `patch` for surgical repair (see `references/task-list-json-pattern.md` § "Concurrent-Write Hazard").
+- **`jobs.json` for cron health**: When the `cronjob` tool is unavailable in cron context, read `~/.hermes/cron/jobs.json` or `~/.hermes/profiles/indigo/cron/jobs.json` directly. Parse with `json.load()` and filter on `last_error=None` vs set — `consecutive_failures > 0` alone is not evidence of active errors. **Always check `consecutive_failures`**: a job with `last_error` set but `consecutive_failures: 0` has already recovered. This is the single most reliable field for "is this actually broken right now?"
+- **`hermes cron list` hides disabled jobs**: The CLI listing only shows enabled/active jobs. Disabled jobs (`enabled: false`) still exist in `jobs.json` but are completely invisible to `hermes cron list`. When a task involves cleaning up cron jobs or investigating "missing" scripts, always parse `jobs.json` directly to find disabled jobs. Confirmed 2026-06-28: two disabled email-brief jobs (`brief:email-morning`, `brief:email-evening`) did not appear in `hermes cron list` output but were present in `jobs.json` with `enabled: false` and stale error status. For cleanup: use `hermes cron delete <id>` to remove, then delete orphaned script files and stale reference docs.
+- **Provider errors are NOT always transient — classify by HTTP status before acting**: `RuntimeError: Provider returned error` (no HTTP status) is transient LOW. But `HTTP 400` from LLM provider endpoints is **MEDIUM** — it will NOT self-resolve (expired API key, billing issue, format change). Distinguish from `oauth-token-expired` (HTTP 400 on `oauth2.googleapis.com/token` only) — that's a different category (CRITICAL). When 4+ jobs fail simultaneously with HTTP 400, it's a systemic credential issue — check provider dashboard. See `references/scan-error-classification.md` for the full error taxonomy including the `provider-http400` category.
+- **Missing-script errors need path verification, not just debugging**: When a cron job's `Script:` field points to a file that doesn't exist (`[Errno 2] No such file or directory`), the fix is to update the cron's script path to the correct file — not to debug the script itself. List the actual scripts in the skill's `scripts/` directory to find the correct path. This is a 30-second fix (update cron config) vs. hours of debugging. Confirmed 2026-06-29: `email:check` cron pointed to `email_check.py` which never existed; actual scripts were `gmail_scan.py` and `check_unread.py`.
+- **finch:work tasks referencing removed cron jobs**: When a task names a cron job that no longer exists (deleted, not just disabled), verify with `hermes cron list` AND `jobs.json` before concluding the task is actionable. If the job is absent from both and its function is covered by an active pipeline, mark the task done as stale. See `references/stale-cron-task-detection.md`.
+- **finch:scan is NOT a task executor**: The scan job only observes and reports. It does not fix cron jobs, install packages, or send emails. Creating tasks is the output — execution belongs to finch:work or the user. Confirmed 2026-06-28: scan correctly identified 4 errors but did not attempt to fix them.
+- **`read_file` tilde expansion path doubling**: In profile cron context, `read_file(path="~/.hermes/MEMORY.md")` resolves to a doubled non-existent path (`/root/.hermes/profiles/indigo/home/.hermes/MEMORY.md`). Always use absolute paths in cron jobs — `/root/.hermes/profiles/indigo/MEMORY.md`.
+- **`jobs.json` field types — dicts vs strings**: Some job object fields like `schedule` are `dict` type (`{"kind": "cron", "expr": "*/5 * * * *"}`), not strings. Applying string operations like `[:30]` directly to a dict raises `TypeError: unhashable type: 'slice'`. Always coerce with `str()` before slicing: `str(j.get('schedule', '?'))[:30]`.
+- **Gateway RSS growth tracking**: The hermes gateway process RSS can grow significantly over days. When reporting system health in scan journals, always note the gateway RSS and compare to prior scans. A 3x increase (e.g., 538MB → 1.5GB in one day) is notable — flag it in the scan summary as "elevated, trending up" even if not yet actionable. Only escalate to MEDIOUS if it exceeds 2GB or causes OOM pressure. **Confirmed 2026-06-30**: Gateway RSS grew from 538MB → 1.5GB between consecutive 2h scans.
+- **consecutive_failures is the ONLY reliable error gate — confirmed 2026-06-30**: A job with `last_error` set to a non-null string but `consecutive_failures: 0` has ALREADY RECOVERED. The error string persists as a stale artifact from a previous run. **Never create a CRITICAL or HIGH task based on `last_error` alone without checking `consecutive_failures > 0`.** Scan #13 (2026-06-30 03:00Z) misdiagnosed 3 transient LLM provider HTTP 400/429 errors (all `consecutive_failures: 0`) as "Google OAuth revoked," creating task_019 + task_014 that blocked email/calendar/drive scrutiny for 24h. Scan #14 (03:33Z) discovered all 140 jobs were healthy and the tasks were stale. gate: filter `consecutive_failures > 0` BEFORE classifying errors. If 0 jobs have consec > 0, report "all clear" and do not create error tasks.** See `references/scan-error-classification.md` § "CRITICAL RULE: consecutive_failures gates task creation."
 
 ## Architecture
 
@@ -91,7 +110,7 @@ See `references/storage-layout.md` for the full directory tree and skill package
 
 **Cooperation:**
 - Receives: Session transcripts (read-only, from the agent's session store)
-- Reads: BehavioralSignal files from the Corvus signal directory
+- Reads: BehavioralSignal files from Chronicle (Corvus was merged into Chronicle)
 - Emits: DecisionRecords to the Finch decision log
 - Writes: MEMORY.md (via memory tool), skill SKILL.md files (via skill_manage)
 
@@ -111,8 +130,89 @@ When the user says "Always" or "Never", this is an explicit behavioral rule. **P
 
 Finch operates as a continuous improvement cycle:
 
-1. **Scan** (`finch:scan`, every 2h) — Read 6 signal sources (cron health, email, calendar, sessions, Drive, system). Validate existing tasks. Maintain prioritized task list at `task-list.json`.
-2. **Work** (`finch:work`, every 30 min) — Pick top pending task. Load governing skill via `skill_view`. Execute ONE task per run. Route findings to MEMORY.md, skill patches, or reference files.
+1. **Scan** (`finch:scan`, every 2h) — Read 7 signal sources (cron health, email, calendar, sessions, Drive, kanban, system). Validate existing tasks. Maintain prioritized task list at `task-list.json`.
+2. **Work** (`finch:work`, every 30 min) — Pick top pending task. Load governing skill via `skill_view`. Execute ONE task per run. Before selecting, check for duplicate task IDs and clean up if found (see `references/duplicate-task-detection.md`). When completing a task:
+   - Update the task's description to include a work log with timestamp and summary of actions taken (e.g., `\n\n[Work log: At <timestamp> checked DNS for art.indigokarasu.com - no records found (NXDOMAIN).]`)
+   - Set the task's status to `"done"`
+   - Set the task's `done_at` timestamp to the completion time
+   - Update the task's `updated_at` timestamp
+   Route findings to MEMORY.md, skill patches, or reference files.
+
+### Task selection priority (finch:work)
+
+When multiple tasks are `pending`, select by:
+1. **`action_required: true`** — tasks needing external action take absolute precedence
+2. **Priority** — `high` > `medium` > `low`
+3. **Due date urgency** — sooner due date wins within same priority
+4. **Status** — `pending` tasks are picked before `in_progress` tasks (which are already being handled)
+
+Skip tasks where `action_required: false` AND `status: "in_progress"` — these are events happening now (e.g., Jared is at the appointment). Only pick them if they transition to needing action.
+
+If NO tasks have `action_required: true` and all remaining tasks are `pending` with `action_required: false`, pick the highest-priority one to validate/monitor (e.g., disk monitoring) and mark it `completed` with a resolution note. This prevents the list from accumulating stale low-priority items.
+
+### Repeated check-and-close anti-pattern (work execution)
+
+When a task was completed and marked `done`, then re-opened by a subsequent scan for the same unresolved issue, **do NOT run another check-and-close cycle.** After the first re-open, the correct action is decisive resolution or escalation — not re-verifying the same fact.
+
+**Symptoms:**
+- Task description says "still NXDOMAIN" / "still unresolved" / "re-opened from prior done status"
+- Task was previously marked done with a "checked, found X" work log but the underlying issue persists
+- The work log shows N consecutive identical checks with no fix attempted
+
+**Procedure when you encounter a re-opened task:**
+1. **Classify the task** — Is this a verification-only task (monitor, check, validate) or an action task (fix, create, configure, deploy)?
+   - Verification tasks that are repeatedly re-opened for the same stable condition should be downgraded to `watching` with a note: "Stable state — not actionable." Do not mark `done`; that triggers re-open.
+   - Action tasks that were marked `done` without the action being taken should be escalated: the prior closure was premature. Execute the actual fix.
+2. **Identify the decisive action** — What single action would close this task permanently? For DNS: create the record. For config: apply the fix. For monitoring: leave as `watching` (not `done`).
+3. **Pick decisive execution over verification** — If the task title or description implies an action (e.g., "DNS... unresolved"), invest the first tool call in actually resolving it, not re-verifying. Verification was already done by the prior finch:run or finch:scan.
+4. **If genuinely stuck** — Mark the task `watching` with a `blocked_reason` field explaining what's needed to unblock it (e.g., "needs Jared to choose IP", "requires panel access to provision"). Do NOT mark `done`.
+
+**Rationale:** Three cycles of check-and-close for one unmet DNS record cost ~9 tool calls over 12 hours. One decisive action costs 2 tool calls. The system learns nothing from re-verification; it only learns from resolution.
+
+### Task actionability filter (cron context)
+
+When running as a cron job with no user present, **filter for autonomous actionability** before applying the priority selection. A task is autonomously actionable if:
+
+1. **No external response required** — The task doesn't depend on someone else replying (e.g., "track response from X" is NOT actionable; "check if X responded" IS actionable as a monitoring check)
+2. **No business decision required** — The task doesn't require accepting/declining engagements, making commitments, or choosing between options with capital implications (e.g., "respond to consulting inquiry — accept or decline" is NOT actionable)
+3. **No authentication required** — The task doesn't need app login, OAuth, or credentials the agent doesn't have (e.g., "check One Medical app" is NOT actionable)
+4. **No user input required** — The task doesn't need the user to clarify, confirm, or choose
+
+**When all pending tasks fail the actionability filter:** Pick the highest-priority task that CAN be executed (even if low-priority), execute it as a monitoring/validation check, and mark it done with a resolution note. Report that higher-priority tasks are blocked pending user input. This is preferable to returning "no tasks" — at minimum, validate system health signals.
+
+**When a task becomes actionable later** (e.g., Ever Solano replies, Jared provides input), finch:scan will create a new task or re-activate the existing one. The blocked status is not permanent — it's a reflection of current actionability, not importance.
+
+#### Cascading dependency awareness (confirmed 2026-06-29)
+
+When a critical infrastructure dependency fails, it blocks MANY tasks simultaneously — not just the task that names the failure. Before iterating through each pending task individually, check for cascading blockers:
+
+1. **Identify infrastructure-level blockers first** — If any `critical` task names an infrastructure failure (OAuth revoked, disk full, gateway down, provider outage), assume ALL tasks depending on that infrastructure are blocked until it's resolved.
+2. **Map the dependency graph mentally** — OAuth revocation blocks: email tasks, calendar tasks, Drive tasks, Takeout tasks, any task requiring Gmail API. Provider outages block: all LLM-dependent tasks. Disk full blocks: all write operations.
+3. **Skip the blocked bulk** — Don't waste time evaluating each email task individually when OAuth is known-dead. Skip the entire dependency cluster in one decision.
+4. **Find the first non-dependent task** — Look for tasks that don't depend on the broken infrastructure: cron health monitoring (uses `hermes cron list`, not Gmail), disk checks (`df -h`), system stats, web lookups, non-Google API calls.
+5. **Execute the first actionable task** — Even if it's low-priority, a monitoring check that produces a useful signal (e.g., "provider errors recovered") is better than returning "no tasks."
+
+**Confirmed 2026-06-29 (this session):** OAuth revoked (task_019) blocked 6+ email/Gmail tasks simultaneously (task_004, task_005, task_006, task_021, task_012, plus the OAuth task itself). Rather than evaluating each one, the correct move was to recognize the cascade, skip the entire cluster, and pick task_014 (cron provider error monitoring) which only needed `hermes cron list` — no Gmail dependency. **Total impact**: 8/140 cron jobs failed from one OAuth revocation event.
+
+**Key insight:** The actionability filter's 4 conditions are per-task checks. Cascading dependency awareness is a pre-filter that eliminates entire clusters before per-task evaluation. It saves 5-10 tool calls per blocked cluster.
+
+### Pipeline task resumption (ledger/state-based)
+
+When an `in_progress` task involves a data pipeline that uses an idempotency ledger or state file (e.g., Chronicle ingest ledger, corpus processing), the original background process may have died while the pipeline was partially complete. Do NOT re-run from scratch — the ledger tracks completed windows.
+
+**Resumption pattern:**
+1. **Verify the process is dead** — `ps -p <PID>` or `ps aux | grep <script_name>`. Confirm the process is actually terminated, not still running silently.
+2. **Check the ledger/state** — Read the pipeline's idempotency ledger (SQLite, JSONL, or similar) to determine which work units are already complete.
+3. **Compare ledger to source data** — Identify which work units (months, files, batches) from the source data are NOT yet in the ledger.
+4. **Run without limits** — The pipeline's ledger-based dedup will skip already-complete units automatically. Running `run_ingest.py --source X --file Y --apply` without `--limit` is safe — it processes only what's missing.
+5. **Update task to done** — Once the ledger shows all units processed, mark the task `done` with a resolution noting the final completion timestamp.
+
+**Confirmed 2026-06-29 (task_023):** Background PID 1663225 (Timeline ingest) was dead. Ledger showed 8/10 months complete (through 2026-04). Source data had 10 months (2025-09 through 2026-06). Ran `run_ingest.py --source timeline --file location-history.json --apply` without `--limit` — ledger correctly skipped the 8 completed months, processed 2026-05 and 2026-06 (2 documents written at 07:33Z). Task marked done.
+
+**Key insight:** Pipeline tasks with idempotency ledgers are ALWAYS resumable. The `--limit N` parameter is only needed for initial testing. Once confirmed working, subsequent runs should omit `--limit` so the ledger handles dedup.
+
+2. **Work** (`finch:work`, every 30 min) — Pick top pending task. Load governing skill via `skill_view`. Execute ONE task per run. Before selecting, check for duplicate task IDs and clean up if found (see `references/duplicate-task-detection.md`). Route findings to MEMORY.md, skill patches, or reference files.
+2a. **Sessions scan — correct pattern**: When scanning recent sessions in finch:scan, call `session_search(limit=10, sort='newest')` WITHOUT `query` (FTS5 treats query as literal text, not a time filter — `query="last 24h"` matches sessions containing those words, not recent sessions). Manually check result timestamps. For finch:daily/weekly mining, follow the cron-skew filtering procedure in SKILL.md § "Session source filtering".
 3. **Mine** (`finch:daily` / `finch:weekly`) — Process session JSONL files for signals: corrections, directives (Always/Never), course changes, breakthroughs, methodologies, stop signals. See `references/mining_methodology.md` for the full methodology.
 4. **Route** — Direct each finding to the optimal storage tier: MEMORY.md (Tier 1: corrections, directives), skill SKILL.md/references/ (Tier 2: tool-usage, service gotchas), reference files (Tier 3: guides, paths, URLs), or Chronicle KG (Tier 4: entity facts). See `references/file-governance.md` for routing criteria and the tier model.
 5. **Journal** — Every run emits Action Journal + DecisionRecord to `decisions.jsonl`.
@@ -152,6 +252,23 @@ A task on the list may aggregate multiple distinct failure modes under one title
 
 Do NOT assume a task with N affected jobs has one root cause. The task title is a scan heuristic, not a diagnosis.
 
+#### Already-fixed verification (resumed investigations)
+
+When a task asks to "resume" or "complete" an interrupted investigation (e.g., "Session identified systemic issues but did not complete fixes"), do NOT assume the fixes are missing. The prior session may have produced findings that were already implemented, or the features may have existed under different names.
+
+**Procedure:** Read the actual code at the relevant file:line locations. Map each claimed-missing feature to a function/class. Check for detection → classification → response → guard completeness. Run existing tests for those features. If all checks pass, mark the task `done` with specific file:line references and test counts as evidence. See `references/already-fixed-verification.md` for the full procedure and an example.
+
+#### All-transient resolution (no fix needed)
+
+When investigation reveals that ALL errors in a task are transient (provider errors with `consecutive_failures: 0`, missing-module errors where the package is actually installed, interpreter-shutdown errors), the correct action is:
+
+1. **Verify** — Read `jobs.json`, check `last_status`, `last_error`, `consecutive_failures` for each affected job. Do NOT trust the task description alone.
+2. **Mark task done** — Set `status: "done"`, add `resolved` timestamp, write `outcome` explaining what was checked and why no fix is needed.
+3. **Downgrade priority if misclassified** — If a task was marked HIGH for interpreter-shutdown or provider errors, downgrade to LOW per the error taxonomy.
+4. **Journal** — Record the resolution so finch:scan doesn't re-create the task on next scan.
+
+**Confirmed 2026-06-28:** task_019 (provider errors + missing-module) — all jobs showed `consecutive_failures: 0` and `last_status: ok`. googleapiclient was already installed. No intervention required. task_014 (interpreter-shutdown) — also transient, downgraded HIGH→LOW.
+
 MEMORY.md entries decay without reinforcement. During compaction:
 
 1. **Reinforcement check**: For each existing entry, check if it was reinforced (re-encountered or re-applied) since last compaction. Entries reinforced within their expected half-life get a `§` durability marker.
@@ -180,16 +297,18 @@ See `references/scan-work-architecture.md` for signal source details and governa
 
 | Job | Frequency | Behavior |
 |-----|-----------|----------|
-| **finch:scan** | Every 2h | Scan 6 sources → maintain task list |
+| **finch:scan** | Every 2h | Scan 7 sources → maintain task list |
 | **finch:work** | Every 30 min | Pick top item → execute. ONE task per run. |
 | **finch:daily** | Daily 6am PT | Mine 24h → Compact → Route → Auto-apply low-risk |
 | **finch:weekly** | Sunday 8am PT | Mine 7d → Compact → Route → Full plan |
 
 ## Recovery Behavior
 
+This section defines error handling and recovery procedures for all finch jobs.
+
 - **Evidence**: Every run writes to `evidence.jsonl` (including no-op runs with `not_activity_reason`).
 - **Gap detection**: On every wake, checks evidence log. If gap exceeds expected cadence (2h for scan, 30min for work), logs `gap_detected` and runs compact remedial pass.
-- **Degraded mode**: When Corvus signals unavailable, continues with available inputs. When session store unavailable, logs `degraded: session_store` and skips mining.
+- **Degraded mode**: When behavioral signals unavailable from Chronicle, continues with available inputs. When session store unavailable, logs `degraded: session_store` and skips mining.
 - **Log compaction**: Evidence/decision logs older than 30 days (no-op) or 90 days (error/gap) compacted. Last 7 days retained.
 
 ## OKRs
@@ -254,9 +373,18 @@ When `session_search` is called without a source filter, the results are overwhe
 1. First call: `session_search(limit=20, sort='newest')` — identify which sessions are interactive (source=telegram/web) vs cron
 2. Second calls: `session_search(session_id='<interactive_session_id>', role_filter='user', window=20)` — read actual user messages from interactive sessions only
 3. Only mine cron sessions for system-health signals (job failures, errors), never for behavioral signals
-4. If no interactive sessions exist in the mining window, report "no interactive sessions — nothing to mine" rather than mining cron noise
+4. **Query-based fallback when browse shows zero interactive sessions:** Browse mode returns at most 20 sessions, which can all be cron if the window is busy even when interactive sessions exist. If step 1 shows no interactive sessions, run targeted queries before concluding: `query="That's wrong"`, `query="No,"`, `query="Don't"`, `query="Actually"`, `query=YYYY-MM-DD` for each day in the mining window. Interactive sessions have user messages containing natural-language corrections that don't appear in cron prompts. Only report "no interactive sessions" after all keyword queries return zero non-cron results.
+5. If no interactive sessions exist in the mining window, report "no interactive sessions — nothing to mine" rather than mining cron noise
 
 **Confirmed pattern:** As of June 2026, a typical 24h window contains 50+ cron sessions and 0-3 interactive sessions. Mining without source filtering wastes the entire pass on cron noise.
+
+### Skill usage analytics — state.db mining
+
+For mining skill usage data from state.db (not behavioral signals), the opposite is true — cron sessions ARE the signal. See `util-skill-analytics` skill for the full procedure. Key differences:
+- Use `JOIN sessions s ON m.session_id = s.id` (not `session_id`)
+- `PRAGMA busy_timeout=30000` (gateway locks the DB)
+- Parse `tool_calls` JSON in Python (LIKE is a full table scan)
+- Filter by `source != 'cron'` for interactive-only analysis
 
 ### HERMES_HOME path resolution in scripts
 
@@ -275,7 +403,7 @@ else:
 MEMORY_FILE = PROFILE_HOME / "MEMORY.md"
 ```
 
-**Gotcha**: The old two-branch logic (`name != "profiles"`) fails when `HERMES_HOME` is already the profile directory (name is e.g. `"indigo"`, not `"profiles"`), causing double-nesting to `profiles/indigo/profiles/indigo/MEMORY.md`. Fixed in `scripts/memory_guard.py` as of 2026-06-21.
+**Gotcha**: The old two-branch logic (`name != "profiles"`) fails when `HERMES_HOME` is already the profile directory (name is e.g. `"indigo"`, not `"profiles"`), causing double-nesting to `profiles/indigo/profiles/indigo/MEMORY.md`. Fixed in `scripts/memory_guard.py` as of 2026-06-21 — the script now uses three-branch logic: (1) detect if HERMES_HOME already IS the profile dir by checking `name == _HERMES_PROFILE && MEMORY.md.exists()`, (2) standard `profiles/` subdir layout, (3) fallback to HERMES_HOME directly.
 
 ### Two evals.json files must be kept in sync
 
@@ -302,9 +430,21 @@ There are two `evals.json` files: `evals.json` (root) and `evals/evals.json` (su
 || `references/forgetting_curve.md` | During MEMORY.md compaction — reinforcement scan, tier routing, consolidation, eviction ||
 || `references/file-governance.md` | Before routing findings — write targets, tier model, off-limits files, creation criteria ||
 || `references/signal-triage-before-fix.md` | Before executing any finch:work task — decompose multi-failure tasks into distinct root causes ||
+|| `references/already-fixed-verification.md` | When finch:work asks to "resume" or "complete" an interrupted investigation — verify whether the code already implements the requested fixes before writing new code ||
+|| `references/email-task-draft-workflow.md` | When finch:work picks an email task requiring contact with a third party not in the thread — full draft workflow (fetch thread → find contact → draft → save → mark done) ||| `references/email-thread-verification.md` | When finch:work picks an email "track response" task — search + fetch thread → check last sender → determine if substantive reply received → update note field. Includes `google_auth.py` fallback for when MCP Gmail tools are unavailable in cron context. ||| `references/gmail-token-expired-draft-workflow.md` | When finch:work picks an email task but Gmail API token is expired/unavailable — cached data search, local draft creation in drafts.jsonl, task-list update pattern for degraded mode. ||
+|| `references/oauth-failure-cron-diagnostic.md` | When finch:work picks an OAuth failure task in cron context — diagnostic flow (token expired vs. revoked vs. malformed), auth URL generation for reporting, task-list update pattern for `blocked` status. Distinguishes "auto-refreshing" from "needs re-auth" from "never authed". ||
+|| `references/systemic-oauth-failure-detection.md` | When 4+ cron jobs fail simultaneously with HTTP 400 on oauth2.googleapis.com/token — systemic revocation pattern, fingerprint, affected jobs list, correct response (one task, not N). Confirmed 2026-06-29. ||| `references/disk-monitoring-pattern.md` | When a finch:work task involves disk usage investigation — cascade from `df -h` down to specific large files, with known consumers table and cleanup commands ||
 || `references/custodian-error-investigation.md` | When a finch:work task involves a custodian error (e.g., custodian:deep Broken pipe) — investigation pattern for journal files and issues.jsonl ||
+|| `references/composio-cron-tool-pattern.md` | When finch:scan needs email/calendar/drive data in cron context — how to call Google APIs via COMPOSIO_SEARCH_TOOLS + COMPOSIO_MULTI_EXECUTE_TOOL |
+|| `references/scan-error-classification.md` | During finch:scan when grouping errored cron jobs by root cause fingerprint (certifi, missing-script, missing-module, rate-limit, interpreter-shutdown, provider-error, provider-http400) ||
+|| `references/runaway-process-pattern.md` | When finch:scan detects a process consuming >50% CPU for >5 min — diagnosis, decision tree, and resolution for stuck background processes from kanban tasks ||
+|| `references/task-list-json-pattern.md` | When reading/writing task-list.json in cron context — schema, read/write patterns, action journal path ||
+|| `references/session-20260629-finch-work-cascade-skip.md` | When finch:work faces multiple pending tasks and a critical infrastructure failure (OAuth, disk, provider) — skip the entire dependent cluster without per-task evaluation |
+|| `references/duplicate-task-detection.md` | When reading task-list.json in finch:work — detect and clean up duplicate task IDs |
+|| `references/session-20260630-scan12-mcp-unreachable.md` | When finch:scan cannot access email/calendar/drive MCP tools in cron context — confirms MCP is LLM-session-only, no CLI workaround, cached-data fallback required. Also covers kanban board systemic failure patterns and gateway RSS growth tracking. || `references/stale-cron-task-detection.md` | When finch:work picks a task referencing cron jobs — verify jobs still exist before attempting fixes ||
+|| `references/patch-json-tool-behavior.md` | When using `patch` on JSON files — escape-drift errors, non-blocking pagination warnings, recommended patterns for cron context ||
 || `references/signal-types-table.md` | Before mining — signal type definitions and routing ||
-|| `references/interactive-menu.md` | When invoked interactively via `/` command — two-level menu layout, Clarify timeout, response parsing, platform adaptation ||
+|| `references/interactive-menu.md` | When invoked interactively via `/` command — two-level menu layout, Clarify timeout, response parsing, platform adaptation |
 || `scripts/memory_guard.py` | Deterministic safety floor for MEMORY.md — hard cap enforcement, directive protection, pointer stripping, atomic locked write. Run as final step of finch.compact or via finch:memory-guard-floor cron. ||
 || `scripts/memory_state.py` | Persisted reinforcement-state store — entry-key -> {reinforcement_count, last_reinforced_at, half_life, tier}. Use `reinforce`, `check`, `route`, `decay-report` subcommands. ||
 

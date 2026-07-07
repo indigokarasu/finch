@@ -106,3 +106,9 @@ DecisionRecord entries in `{agent_root}/commons/data/ocas-finch/decisions.jsonl`
    left a file at that path, the router silently processes stale data. Always
    redirect miner stdout to an explicit fresh path and verify
    `meta.sessions_scanned` before routing.
+
+7. **session_search 10-result cap** — The `session_search` tool returns at most 10 results per call, even with `limit=100`. This is a hard tool cap, not a pagination issue. For comprehensive mining, always supplement with a direct query to `state.db`:
+   ```python
+   sqlite3 ~/.hermes/state.db "SELECT id, source, started_at, title, message_count FROM sessions WHERE source IN ('telegram','cli','web') AND started_at > ? ORDER BY started_at DESC LIMIT 50"
+   ```
+   Use the `id` column values as `session_id` for subsequent `session_search(session_id=...)` calls to read full session content. The 10-result cap means finch:weekly can miss older interactive sessions if there are more than 10 cron sessions newer than them.

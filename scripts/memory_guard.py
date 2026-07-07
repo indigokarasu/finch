@@ -37,17 +37,14 @@ from pathlib import Path
 
 HERMES_HOME = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes")))
 _HERMES_PROFILE = os.getenv("HERMES_PROFILE", "indigo")
-# Resolve profile home: handle three cases:
-# 1. HERMES_HOME already IS the profile dir (e.g. ~/.hermes/profiles/indigo) → use directly
-# 2. HERMES_HOME/.hermes with profiles/ subdir → append profiles/<profile>
-# 3. Fallback → use HERMES_HOME as-is
-if HERMES_HOME.name == _HERMES_PROFILE and (HERMES_HOME / "MEMORY.md").exists():
+# Handle three cases: (1) HERMES_HOME already IS the profile dir, (2) standard layout with profiles/ subdir, (3) fallback
+if HERMES_HOME.name == _HERMES_PROFILE:
     PROFILE_HOME = HERMES_HOME
 elif HERMES_HOME.name != "profiles" and (HERMES_HOME / "profiles" / _HERMES_PROFILE).is_dir():
     PROFILE_HOME = HERMES_HOME / "profiles" / _HERMES_PROFILE
 else:
     PROFILE_HOME = HERMES_HOME
-DEFAULT_MEMORY = PROFILE_HOME / "MEMORY.md"
+DEFAULT_MEMORY = PROFILE_HOME / "memories" / "MEMORY.md"
 HARD_CAP = int(os.getenv("HERMES_MEMORY_CHAR_LIMIT", "2200"))
 SOFT_TARGET = int(os.getenv("HERMES_MEMORY_SOFT_TARGET", "500"))
 ARCHIVE = HERMES_HOME / "commons" / "data" / "ocas-finch" / "memory_archive.md"
