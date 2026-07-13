@@ -31,6 +31,10 @@ triggers:
 - system health
 - cron errors
 - task list
+- memory full
+- MEMORY.md at capacity
+- memory compaction
+- memory guard
 ---
 
 # ocas-finch
@@ -56,6 +60,7 @@ ocas-finch does not own: trigger detection, session management, or cross-skill o
 - Manual session mining via `finch.mine` or `finch.run`
 - After major sessions: auto-detect corrections, directives, breakthroughs, methodologies
 - MEMORY.md compaction: dedup, re-rank, evict stale entries
+- Memory at/near capacity (memory full): run `finch.compact` — tier-route + consolidate, do NOT delete entries ad hoc; route Tier-2/3/4 facts to skills/references/Chronicle. This is the procedure, not "there is no skill."
 - Skill library maintenance: route findings to SKILL.md patches
 
 ## When NOT to Use
@@ -72,7 +77,7 @@ See `references/storage-layout.md` for the full directory tree and skill package
 ## Scanning Gotchas
 
 - **Verify tool availability before parallel batches**: When finch:scan calls multiple tools in parallel, one invalid tool name poisons the entire batch — ALL calls return "Skipped" with no partial results. Always verify tool names exist before batching. The `cronjob` tool does NOT exist in all session profiles. Use `search_files` or `terminal` to inspect cron state when unavailable. **Updated 2026-06-30**: The old guidance said `mcp_google_workspace_*` tools are unreachable in cron. This is now WRONG — Composio tools (`GMAIL_FETCH_EMAILS`, `GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS`, `GOOGLEDRIVE_FIND_FILE`) work in cron context via `COMPOSIO_MULTI_EXECUTE_TOOL`. The Gmail toolkit may lack an active connection (no OAuth), but Calendar and Drive are functional. Always attempt these tools first — only skip if the toolkit connection is inactive, not as a blanket rule.
-- **MCP tools are now reachable in cron via Composio**: The old guidance said `mcp_google_workspace_*` tools are completely unreachable in cron context. **Updated 2026-06-30**: This is no longer true. The `COMPOSIO_MULTI_EXECUTE_TOOL` and `COMPOSIO_SEARCH_TOOLS` meta-tools work in cron context and can call Google Calendar and Drive tools directly. Gmail may fail if the toolkit has no active OAuth connection — check `has_active_connection` in the search response. Calendar and Drive have active connections as of 2026-06-30. Use these tools in their own batch (they use a different backend than `terminal`/`read_file` calls). **Do NOT skip email/calendar/drive as a blanket rule — attempt them first and only skip on connection failure.**
+- **MCP tools are now reachable in cron via Composio**: The old guidance said `mcp_google_workspace_*` tools are completely unreachable in cron context. **Updated 2026-06-30**: This is no longer true. The `COMPOSIO_MULTI_EXECUTE_TOOL` and `COMPOSIO_SEARCH_TOOLS` meta-tools work in cron context and can call Google Calendar and Drive tools directly. Gmail may fail if the toolkit has no active OAuth connection — check `has_active_connection` in the search response. When retrieving message content from search results (e.g., Gmail), note the common two-step pattern: first call the search tool to get ID lists, then call the content retrieval tool with those IDs to get full message details. Calendar and Drive have active connections as of 2026-06-30. Use these tools in their own batch (they use a different backend than `terminal`/`read_file` calls). **Do NOT skip email/calendar/drive as a blanket rule — attempt them first and only skip on connection failure.**
 - **Stale errors from `hermes cron list`**: The text output of `hermes cron list` shows the full history of each job. A job that failed at 14:00 but recovered at 15:00 will still show the error line. **`grep -B1 "error:"` matches these stale errors, inflating the error count.** Always verify the `Last run:` timestamp is from the latest run before counting an error as active. If the last run shows `ok`, the error is stale and should not be counted or reported. Observed 2026-06-13: 9 grep hits but only 3 were actual transient errors; the rest had already recovered. Create tasks only for persistent issues that won't self-resolve.
 - **Sessions scan — date-string workaround**: When recent sessions don't appear with `query="last 24h"` (FTS5 limitation), use `query="YYYY-MM-DD"` for today's date. This matches timestamps in session IDs and reliably returns recent sessions. Confirmed 2026-06-28: `query="last 24h"` returned sessions from June 20; `query="2026-06-28"` returned today's actual sessions.
 - **Mining interactive session messages — session_search scroll is unreliable; use direct SQL.** Scroll mode (`session_id` + `around_message_id`) fails with `around_message_id N not in session_id` because message IDs are global, not per-session sequential. To mine user messages from interactive (non-cron) sessions, query `state.db` directly: `sqlite3 /root/.hermes/profiles/indigo/state.db` → tables `sessions(id, source, started_at, title, message_count)` + `messages(session_id, role, content, timestamp)`. Filter `source != 'cron'` and `started_at >= (now_unix - 7*86400)`, then pull `role='user'` rows and keyword-scan. This is the reliable path (used by weekly-0831 and weekly-0858 runs). Browse-mode `session_search` returns only session listings, not message bodies.
@@ -83,6 +88,8 @@ See `references/storage-layout.md` for the full directory tree and skill package
 - **Disk-before-auth diagnostic**: When ALL Google MCP services fail simultaneously, first check `df -h /`. ENOSPC produces errors that look like auth failures. Do not generate auth URLs or ask user to re-auth while disk is full. See `references/session-2026-05-31-disk-recovery.md`.
 - **`execute_code` in cron jobs**: While previously restricted, `execute_code` can now be used in cron jobs to run Python scripts that directly access files using standard `open()` calls. This avoids the line-number prefix issue from the `read_file` tool. For task-list.json updates: use `execute_code` to read the file with `open()`, parse/modify the JSON in Python, then write it back with `open()`. If using `read_file`, remember to strip line-number prefixes (`1|`, `2|`, ...) before parsing JSON. See `references/pitfalls.md` for additional patterns.
 - **Concurrent-write hazard on task-list.json**: When `write_file` warns that a sibling subagent modified the file, do NOT overwrite. Read the current state first, merge your changes, then write. If the file contains JSON corruption from a concurrent write, use `patch` for surgical repair (see `references/task-list-json-pattern.md` § "Concurrent-Write Hazard").
+- **Concurrent-write hazard on MEMORY.md**: Weekly/daily compaction can race with sibling agents or other Finch runs updating `/root/.hermes/profiles/indigo/memories/MEMORY.md`. If any write/patch reports a sibling modification warning, immediately re-read the current MEMORY.md and merge conservatively; preserve newly added directives unless they clearly duplicate stronger entries. For small corrections, prefer `patch` over full-file `write_file`. For full compaction rewrites, perform a final read-back + `wc -c`/size verification before journaling applied counts.
+- **Concurrent-write hazard on MEMORY.md**: The same sibling-write warning applies to profile memory compaction. If `write_file` warns that another agent modified `/root/.hermes/profiles/indigo/memories/MEMORY.md`, immediately re-read the current file, merge your intended compaction/signals into that version, then write. Never assume your earlier read is still authoritative; memory compaction runs can overlap with other self-improvement jobs.
 - **`jobs.json` for cron health**: When the `cronjob` tool is unavailable in cron context, read `~/.hermes/cron/jobs.json` or `~/.hermes/profiles/indigo/cron/jobs.json` directly. Parse with `json.load()` and filter on `last_error=None` vs set — `consecutive_failures > 0` alone is not evidence of active errors. **Always check `consecutive_failures`**: a job with `last_error` set but `consecutive_failures: 0` has already recovered. This is the single most reliable field for "is this actually broken right now?"
 - **`hermes cron list` hides disabled jobs**: The CLI listing only shows enabled/active jobs. Disabled jobs (`enabled: false`) still exist in `jobs.json` but are completely invisible to `hermes cron list`. When a task involves cleaning up cron jobs or investigating "missing" scripts, always parse `jobs.json` directly to find disabled jobs. Confirmed 2026-06-28: two disabled email-brief jobs (`brief:email-morning`, `brief:email-evening`) did not appear in `hermes cron list` output but were present in `jobs.json` with `enabled: false` and stale error status. For cleanup: use `hermes cron delete <id>` to remove, then delete orphaned script files and stale reference docs.
 - **Provider errors are NOT always transient — classify by HTTP status before acting**: `RuntimeError: Provider returned error` (no HTTP status) is transient LOW. But `HTTP 400` from LLM provider endpoints is **MEDIUM** — it will NOT self-resolve (expired API key, billing issue, format change). Distinguish from `oauth-token-expired` (HTTP 400 on `oauth2.googleapis.com/token` only) — that's a different category (CRITICAL). When 4+ jobs fail simultaneously with HTTP 400, it's a systemic credential issue — check provider dashboard. See `references/scan-error-classification.md` for the full error taxonomy including the `provider-http400` category.
@@ -291,6 +298,8 @@ See `references/scan-work-architecture.md` for signal source details and governa
 ### Forcing an immediate run
 `cronjob action='run'` does NOT force a scheduled **LLM** job to execute — it only bumps `next_run_at` to the next NATURAL tick (the job fires on its normal schedule, not immediately). To force execution NOW: **PAUSE the job first (`action='pause'`), then `run` (`action='run'`)** — the paused state triggers forced execution. `no_agent`/script jobs (e.g. `finch`, `finch:floor`) run on a plain `run` without pausing. After a forced run succeeds, the job returns to `state: scheduled` automatically.
 
+**Verification gate:** A queued immediate run is not a completed run. After every manual trigger, re-read `jobs.json`/`cronjob list` and verify `last_run_at` advanced to the current run window and `last_status` is current. If `next_run_at` is in the past but `last_run_at` did not advance after a tick, report the job as **queued/not yet executed**, not completed. For `finch.scan`, `finch.work`, `daily`, and `weekly`, run deterministic sub-functions directly where available (for example `self_update.py`, `memory_guard.py`, task-list inspection, journal write) and distinguish those completed direct actions from still-queued LLM cron jobs.
+
 ### Mass 401 across finch (and other) jobs
 If multiple finch jobs error with `401`, the cause is usually NOT model routing — it is a **stale `[mcp_servers]` block in the profile `.env`** (`/root/.hermes/profiles/<p>/.env`) shipping an invalid/expired token (e.g. a dead Discord token) that breaks ALL MCP calls (github MCP included), not just the failing job's domain. Fix: remove the `[mcp_servers]` section; the client falls back to valid config and MCP works. See `cron-job-repair` for the model-routing 401 vs MCP-auth 401 distinction.
 
@@ -350,6 +359,10 @@ After every session, review the conversation for signals and update the skill li
 
 See `references/pitfalls.md` for the full consolidated pitfalls list.
 
+### `memory` tool may be unavailable in cron
+
+If the `memory` tool returns unavailable during finch daily/compact runs, do not stop after reporting failure. Use the canonical profile memory path (`/root/.hermes/profiles/indigo/memories/MEMORY.md`) and perform the same operation by direct file edit, preserving the compaction cap and directive priority ordering. Treat direct writes as a fallback for cron execution only; re-read before writing if any sibling-write warning appears.
+
 ### MEMORY.md must not contain pointers to routed content
 
 After tier routing, MEMORY.md should contain **only Tier 1 knowledge** — behavioral directives, cross-cutting corrections, and critical operating constraints. Do NOT add pointers like "see skill/references/X.md" for routed entries. Pointers add noise without value. If a session needs Tier 2/3/4 knowledge, it loads the skill or reads the reference directly. MEMORY.md is not a directory of everything the agent knows.
@@ -385,11 +398,12 @@ This applies to all finch jobs that mine sessions: finch:daily, finch:weekly, an
 When `session_search` is called without a source filter, the results are overwhelmingly cron sessions (health monitors, heartbeats, dispatcher runs). These contain **zero** user-facing behavioral signals. Interactive sessions (where corrections, directives, and preferences live) are a small fraction of total sessions.
 
 **Mining procedure — ALWAYS do this:**
-1. First call: `session_search(limit=20, sort='newest')` — identify which sessions are interactive (source=telegram/web) vs cron
-2. Second calls: `session_search(session_id='<interactive_session_id>', role_filter='user', window=20)` — read actual user messages from interactive sessions only
-3. Only mine cron sessions for system-health signals (job failures, errors), never for behavioral signals
-4. **Query-based fallback when browse shows zero interactive sessions:** Browse mode returns at most 20 sessions, which can all be cron if the window is busy even when interactive sessions exist. If step 1 shows no interactive sessions, run targeted queries before concluding: `query="That's wrong"`, `query="No,"`, `query="Don't"`, `query="Actually"`, `query=YYYY-MM-DD` for each day in the mining window. Interactive sessions have user messages containing natural-language corrections that don't appear in cron prompts. Only report "no interactive sessions" after all keyword queries return zero non-cron results.
-5. If no interactive sessions exist in the mining window, report "no interactive sessions — nothing to mine" rather than mining cron noise
+1. First call: `session_search(limit=20, sort='newest')` — identify which sessions are interactive (source=telegram/web/cli) vs cron.
+2. Pull actual user messages with direct SQL, not `session_search` scroll. Use `sqlite3 /root/.hermes/profiles/indigo/state.db` and join `sessions` to `messages`, filtering `s.source!='cron'`, `m.role='user'`, and the desired `started_at` window. Scroll mode is unreliable because message IDs are global, not session-local.
+3. Filter out context compaction, system notes, tool results, and messages shorter than 3 chars before signal extraction.
+4. Only mine cron sessions for system-health signals (job failures, errors), never for behavioral signals.
+5. **Query-based fallback when browse shows zero interactive sessions:** Browse mode returns at most 20 sessions, which can all be cron if the window is busy even when interactive sessions exist. If step 1 shows no interactive sessions, run targeted queries before concluding: `query="That's wrong"`, `query="No,"`, `query="Don't"`, `query="Actually"`, `query=YYYY-MM-DD` for each day in the mining window. Interactive sessions have user messages containing natural-language corrections that don't appear in cron prompts. Only report "no interactive sessions" after all keyword queries return zero non-cron results.
+6. If no interactive sessions exist in the mining window, report "no interactive sessions — nothing to mine" rather than mining cron noise
 
 **Confirmed pattern:** As of June 2026, a typical 24h window contains 50+ cron sessions and 0-3 interactive sessions. Mining without source filtering wastes the entire pass on cron noise.
 
@@ -492,6 +506,10 @@ python3 scripts/memory_guard.py --json
 ```
 
 Run as Step 7 of `finch.compact` or independently via `finch:memory-guard-floor` cron (every 6h).
+
+### self_update.py / self_update.sh
+
+`self_update.py` must be a real Python wrapper (not a bash script with a `.py` extension) and must resolve the skill directory from `Path(__file__).resolve().parents[1]`, never from a hardcoded default-profile path like `/root/.hermes/skills/ocas-finch`. Manual Finch runs should execute `python3 scripts/self_update.py` and require exit 0 before reporting update health. `self_update.sh` is the GitHub-version fetch/install path; if it exits 1 with no output, inspect the `gh api`/remote-version step rather than treating Finch as generally broken.
 
 ### memory_state.py
 
