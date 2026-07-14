@@ -70,9 +70,14 @@ task_list = json.loads(result["output"])
 ```
 
 ## Write pattern in cron
-Use `write_file` directly — confirmed clean JSON output in cron context.
+Use Python serialization (`json.load` → mutate dict → `json.dump`) rather than hand-composing JSON in context.
 
-Or via terminal heredoc (confirmed 2026-06-27):
+Preferred options:
+- `execute_code` with ordinary Python file I/O when available in the cron profile.
+- `terminal` with a `python3 << 'PYEOF'` heredoc as the reliable fallback, especially after repeated `execute_code` mistakes or when you need direct shell-side validation.
+- `write_file` only for small, fully-visible JSON blobs.
+
+Terminal heredoc pattern (confirmed 2026-06-27):
 ```bash
 python3 << 'PYEOF'
 import json, os
@@ -94,7 +99,20 @@ print(f"Scan #{task_list['scan_count']} written")
 PYEOF
 ```
 
-**Note:** `execute_code` is BLOCKED in cron jobs — the heredoc pattern above is the correct approach for structured file updates in cron context.
+**Note:** Older runs treated `execute_code` as blocked in cron, but this is no longer universally true. Do not encode a blanket refusal. If `execute_code` fails repeatedly because of script mistakes or profile quirks, switch to the terminal Python-heredoc pattern and validate with `json.load`.
+
+## Reopening or revalidating previously resolved tasks
+
+When finch:scan reactivates a task that was previously `done`/`completed`/resolved, clear contradictory completion fields during the upsert. A task must not be both `status: "pending"` and carry `resolved`, `done_at`, `completed_at`, `resolution`, or `outcome` from an earlier closure.
+
+**Pattern:**
+```python
+if new_status in {"pending", "active", "in_progress", "watching"}:
+    for k in ["resolved", "done_at", "completed_at", "resolution", "outcome"]:
+        task.pop(k, None)
+```
+
+**Why:** On 2026-07-09, scan correctly re-opened disk pressure and Braun redesign tasks but initially left stale `resolved` fields in place. The JSON was syntactically valid but semantically contradictory, which can mislead finch:work selection and user reports.
 
 **Bash heredoc anti-pattern (confirmed 2026-06-28)**: Do NOT use `cat > file << 'EOF' ... EOF` to write JSON files. Bash heredocs:
 1. Fail silently on JSON syntax errors (no validation at write time)
