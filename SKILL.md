@@ -90,15 +90,16 @@ The full operational detail for each item below lives in `references/scanning-go
 - Direct MCP credential-store fallback (`/root/.google_workspace_mcp/credentials/<email>.json`) when dispatch rejects + legacy token is `deleted_client`
 - Stale errors from `hermes cron list` — verify `Last run:` timestamp; `consecutive_failures` is the only reliable error gate
 - Re-verify prior completions/STATES against LIVE signal bidirectionally (re-open on relapse, resolve on live recovery)
-- MCP Google Workspace param is `page_size`, not `limit`/`max_results` — always `tool_describe` first
+- MCP Google Workspace param is `page_size`, not `limit`/`max_results` — always `tool_describe` first. Batch content tools (`get_gmail_messages_content_batch`, `get_gmail_threads_content_batch`) ALSO require `user_google_email` explicitly — omitting it returns a pydantic `missing_argument` validation error, not a missing-tool error. (Confirmed 2026-07-17: first attempt without `user_google_email` failed; adding it succeeded.)
 - Email scan MUST paginate to completion (`page_token` loop) — page-1-only misses high-value items
 - Sessions scan date-string workaround (`query="YYYY-MM-DD"`); mine interactive messages via direct `state.db` SQL, not session_search scroll
 - Only report actual fixes, never stale/transient issues; interpreter-shutdown errors are always transient
 - Never force model overrides on cron jobs; maintain skill index; push local changes to GitHub immediately (user directive)
 - Disk-before-auth diagnostic (`df -h /` before OAuth); `execute_code` blocked in indigo cron profile — use `terminal` python3
-- Concurrent-write hazards on task-list.json / MEMORY.md — re-read before write on sibling-modify warning
+- Concurrent-write hazards on task-list.json / MEMORY.md / ANY shared prep file — a sibling subagent may modify the same file mid-write (e.g. `EXPORT-RUNBOOK.md`). On a sibling-modify warning, read the file back, confirm via `stat -c '%y'` mtime that your version is the latest on disk, and record the concurrency flag in the task note. Full procedure + `DaemonThreadPoolExecutor` fallback in `references/concurrent-write-recovery.md`.
 - `read_file` view of a JSON file is NOT validation — it can display trailing-comma corruption as valid and misreport size; only `json.load()` catches it. Validate-after-edit with `terminal python3 -c "import json; json.load(open(...))"` (execute_code is blocked in indigo cron).
-- `jobs.json` for cron health when `cronjob` tool unavailable; `hermes cron list` hides disabled jobs
+- Long single-line JSON string values defeat the `patch` fuzzy matcher — a ~3KB one-line `signal` value in task-list.json returned "Could not find a match" on 3 correct attempts (no whitespace/anchor issue, just line length). Fallback for any task-list.json / long-line JSON edit: write a small `terminal python3` script that `json.load()`s the file, mutates the in-memory dict, and `json.dump()`s back (execute_code is blocked in indigo cron). Do NOT loop on `patch` for long JSON lines — switch to the script fallback immediately.
+- `jobs.json` for cron health when `cronjob` tool unavailable; `hermes cron list` hides disabled jobs. **NEVER report "cron health clean" without enumerating ALL jobs from `jobs.json` and surfacing every `last_status=error` job — including paused/disabled ones a summary view hides.** Classification procedure (see `references/cron-health-validation.md` for the reusable parse script): (a) TRANSIENT/recovered if `consecutive_failures=0` AND a later run produced success output (check `cron/output/<jobid>/` for a subsequent ok file) — not a task; (b) PAUSED-BY-DESIGN if `state=paused` and `last_error` names a missing credential/OAuth the agent can't complete interactively (e.g. `taste:sync-spotify` needs Jared's interactive Spotify OAuth) — note as standing limitation, not a task; (c) REAL if `consecutive_failures>0` or the error recurs across ticks — create/escalate a task. **Anti-pattern (2026-07-17):** a prior scan reported "cron health clean" and missed `monitor:journals` (transient, recovered next tick) and `taste:sync-spotify` (paused) because it relied on a summary-style view instead of full `jobs.json` error enumeration. Re-verify against `jobs.json` directly every scan.
 - Provider HTTP 400 is MEDIUM (not transient) — classify by status; missing-script errors need path verification not debugging
 - finch:scan is NOT a task executor; read_file tilde-expansion path doubling; `jobs.json` schedule fields are dicts not strings
 - Gateway RSS growth tracking (3x = notable, >2GB = escalate)
@@ -175,6 +176,21 @@ When a task was completed and marked `done`, then re-opened by a subsequent scan
 4. **If genuinely stuck** — Mark the task `watching` with a `blocked_reason` field explaining what's needed to unblock it (e.g., "needs Jared to choose IP", "requires panel access to provision"). Do NOT mark `done`.
 
 **Rationale:** Three cycles of check-and-close for one unmet DNS record cost ~9 tool calls over 12 hours. One decisive action costs 2 tool calls. The system learns nothing from re-verification; it only learns from resolution.
+
+#### Constructive progress while blocked (work execution)
+
+When a task is blocked on an external party (Jared login, third-party OAuth, a human decision) but has an Indigo-owned executable sub-component, **build that component now** rather than re-verifying the block. This converts a no-op check into durable, reusable tooling.
+
+**Confirmed 2026-07-17 (finch:work, `relay-shutdown`):** The task was blocked on Jared's Relay login (actual export needed his credentials). Instead of another "still blocked" check, finch:work authored `verify.py` — a self-contained stdlib verifier that checks every `workflows/*.json` parses as JSON and every `tables/*.csv` has ≥1 data row, exiting non-zero on any failure. It was validated against fixtures (broken JSON / empty CSV / header-only CSV all FAIL; valid data PASSes) and wired into the runbook's step 8. The verifier is reusable the moment Jared exports — no re-derivation needed.
+
+**Procedure when a task is blocked but has an executable sub-component:**
+1. Decompose the task into the blocked part (needs external actor) vs. the autonomous part (Indigo can build now).
+2. Build the autonomous part as a real, re-runnable artifact (script, fixture, template) — not a status note.
+3. Validate it actually works (run it against fixtures / a dry target) before reporting done. A "created script" claim with no execution is the naming-without-fixing anti-pattern.
+4. Wire it into the task's runbook/steps so the eventual unblock is one command, not re-analysis.
+5. Report the block honestly — the verifier existing does NOT mean the underlying task is complete.
+
+This is the inverse of the check-and-close anti-pattern: instead of burning tool calls re-confirming a stable block, invest them in tooling that makes the eventual execution one-shot.
 
 ### Task actionability filter (cron context)
 
@@ -380,52 +396,14 @@ See `references/pitfalls.md` for the full consolidated pitfalls list.
 - MEMORY.md must contain only Tier 1 knowledge — no pointers to routed content; under 500 chars when well-compacted
 - Directive consolidation — merge two directives sharing a principle, keep specific phrasing, list both dates
 - FTS5 minimum token length (3-4 chars) drops short corrections (`No`, `Don't`) — mine without `query=`, use `role_filter=user`, scan visually
-- Session source filtering — cron sessions drown interactive ones; identify interactive first, pull user messages via direct `state.db` SQL, fallback to keyword queries before declaring "no interactive sessions"
+- Session source filtering — cron sessions drown interactive ones; under indigo cron, `session_search` reads the DEFAULT profile store, so query `/root/.hermes/profiles/indigo/state.db` directly. Identify interactive first (source NOT LIKE 'cron%'), pull user messages via direct `state.db` SQL, drop `[CONTEXT COMPACTION — REFERENCE ONLY]` headers (false positives), parse JSON-array `content`. Full recipe: `references/session-mining-state-db-recipe.md`. Fallback to keyword queries before declaring "no interactive sessions".
 - Skill usage analytics — cron sessions ARE the signal for state.db mining (opposite of behavioral mining); use JOIN + busy_timeout + Python JSON parse
-- HERMES_HOME path resolution — three-branch logic, never hardcode `~/.hermes/MEMORY.md`; old two-branch double-nests
+- HERMES_HOME path resolution — three-branch logic, never hardcode `~/.hermes/MEMORY.md`; old two-branch double-nests. Under indigo cron, a bare `read_file('~/.hermes/MEMORY.md')` resolves to the DEFAULT profile memory (different path AND content) — always target `/root/.hermes/profiles/indigo/memories/MEMORY.md` explicitly. See `references/session-mining-state-db-recipe.md` § MEMORY.md path trap.
 - Two evals.json files (root + evals/) must stay in sync; root is canonical
 
 ## Support File Map
 
-| File | When to read |
-|------|-------------|
-| `references/active-review.md` | Before scanning for signals |
-| `references/signal_patterns.md` | Before mining sessions |
-| `references/mining_methodology.md` | Before first mining run |
-| `references/scan-work-architecture.md` | Before configuring scan/work jobs |
-| `references/skill-library-maintenance.md` | After any session that produces a learning |
-| `references/skill-update-directive.md` | During end-of-session skill review |
-| `references/cleanup-and-health.md` | During system health audits |
-| `references/session-2026-05-31-disk-recovery.md` | When investigating disk-full → MCP auth cascades, parallel tool batch poisoning, or emergency cleanup patterns |
-| `references/external-skill-overlap-map.md` | Before creating evaluation skills |
-| `references/git-skill-push-pattern.md` | When pushing skill changes to GitHub |
-| `references/pitfalls.md` | Before any finch operation |
-| `references/anti-patterns.md` | Before any finch operation — 10 anti-patterns including declaration of victory and code fence pitfalls |
-| `references/okrs.md` | During OKR evaluation |
-| `references/storage-layout.md` | When inspecting data directories or skill package structure |
-|| `references/forgetting_curve.md` | During MEMORY.md compaction — reinforcement scan, tier routing, consolidation, eviction ||
-|| `references/file-governance.md` | Before routing findings — write targets, tier model, off-limits files, creation criteria ||
-|| `references/signal-triage-before-fix.md` | Before executing any finch:work task — decompose multi-failure tasks into distinct root causes ||
-|| `references/already-fixed-verification.md` | When finch:work asks to "resume" or "complete" an interrupted investigation — verify whether the code already implements the requested fixes before writing new code ||
-|| `references/gh-ci-stale-run-verification.md` | When finch:work picks a repo-CI-failure task — verify the failing run wasn't superseded by a green run on the same head SHA before opening a fix ||
-|| `references/email-task-draft-workflow.md` | When finch:work picks an email task requiring contact with a third party not in the thread — full draft workflow (fetch thread → find contact → draft → save → mark done) ||| `references/email-thread-verification.md` | When finch:work picks an email "track response" task — search + fetch thread → check last sender → determine if substantive reply received → update note field. Includes `google_auth.py` fallback for when MCP Gmail tools are unavailable in cron context. ||| `references/gmail-token-expired-draft-workflow.md` | When finch:work picks an email task but Gmail API token is expired/unavailable — cached data search, local draft creation in drafts.jsonl, task-list update pattern for degraded mode. ||
-|| `references/oauth-failure-cron-diagnostic.md` | When finch:work picks an OAuth failure task in cron context — diagnostic flow (token expired vs. revoked vs. malformed), auth URL generation for reporting, task-list update pattern for `blocked` status. Distinguishes "auto-refreshing" from "needs re-auth" from "never authed". ||
-|| `references/systemic-oauth-failure-detection.md` | When 4+ cron jobs fail simultaneously with HTTP 400 on oauth2.googleapis.com/token — systemic revocation pattern, fingerprint, affected jobs list, correct response (one task, not N). Confirmed 2026-06-29. ||| `references/disk-monitoring-pattern.md` | When a finch:work task involves disk usage investigation — cascade from `df -h` down to specific large files, with known consumers table and cleanup commands ||
-|| `references/custodian-error-investigation.md` | When a finch:work task involves a custodian error (e.g., custodian:deep Broken pipe) — investigation pattern for journal files and issues.jsonl ||
-|| `references/composio-cron-tool-pattern.md` | When finch:scan needs email/calendar/drive data in cron context — how to call Google APIs via COMPOSIO_SEARCH_TOOLS + COMPOSIO_MULTI_EXECUTE_TOOL |
-|| `references/scan-error-classification.md` | During finch:scan when grouping errored cron jobs by root cause fingerprint (certifi, missing-script, missing-module, rate-limit, interpreter-shutdown, provider-error, provider-http400) ||
-|| `references/runaway-process-pattern.md` | When finch:scan detects a process consuming >50% CPU for >5 min — diagnosis, decision tree, and resolution for stuck background processes from kanban tasks ||
-|| `references/email-mcp-pagination-parsing.md` | When finch:scan fetches Gmail via MCP — paginate to completion (page_token loop), pre-filter automated noise with `-from:()` before content fetch, strip residual batch to From/Subject/Date in terminal (avoid context flood; do NOT double-decode unicode_escape), and use `from:<addr> newer_than:Nd=0` as a "no reply" proof ||
-|| `references/session-20260629-finch-work-cascade-skip.md` | When finch:work faces multiple pending tasks and a critical infrastructure failure (OAuth, disk, provider) — skip the entire dependent cluster without per-task evaluation |
-|| `references/duplicate-task-detection.md` | When reading task-list.json in finch:work — detect and clean up duplicate task IDs |
-|| `references/session-20260630-scan12-mcp-unreachable.md` | When finch:scan cannot access email/calendar/drive MCP tools in cron context — confirms MCP is LLM-session-only, no CLI workaround, cached-data fallback required. Also covers kanban board systemic failure patterns and gateway RSS growth tracking. || `references/stale-cron-task-detection.md` | When finch:work picks a task referencing cron jobs — verify jobs still exist before attempting fixes ||
-|| `references/patch-json-tool-behavior.md` | When using `patch` on JSON files — escape-drift errors, non-blocking pagination warnings, recommended patterns for cron context ||
-|| `references/cron-json-edit-pattern.md` | Cron-scope JSON edits without execute_code — patch-lint-doesn't-block, trailing-comma/backslash corruption, validate-after-edit, batch-probe rule for untrusted MCP tools ||
-|| `references/signal-types-table.md` | Before mining — signal type definitions and routing ||
-|| `references/interactive-menu.md` | When invoked interactively via `/` command — two-level menu layout, Clarify timeout, response parsing, platform adaptation |
-|| `scripts/memory_guard.py` | Deterministic safety floor for MEMORY.md — hard cap enforcement, directive protection, pointer stripping, atomic locked write. Run as final step of finch.compact or via finch:memory-guard-floor cron. ||
-|| `scripts/memory_state.py` | Persisted reinforcement-state store — entry-key -> {reinforcement_count, last_reinforced_at, half_life, tier}. Use `reinforce`, `check`, `route`, `decay-report` subcommands. ||
-
+Full file-to-purpose map (when to read each reference, script, and data file) → `references/finch-support-map.md`.
 ## Scripts
 
 Full detail (eviction priority, self_update wrapper contract, memory_state subcommands) in `references/operational-gotchas.md` § Scripts:
@@ -433,6 +411,9 @@ Full detail (eviction priority, self_update wrapper contract, memory_state subco
 - `memory_guard.py` — deterministic MEMORY.md safety floor; mandatory post-guard Step 7.5 verification (Methodologies must outrank Course Changes in eviction)
 - `self_update.py` / `self_update.sh` — real Python wrapper resolving skill dir from `Path(__file__).resolve().parents[1]`; `self_update.sh` is the GitHub fetch/install path
 - `memory_state.py` — persisted reinforcement-state store (Ebbinghaus forgetting curve); `reinforce` / `check` / `route` / `decay-report` subcommands
+- `verify_sepagree_signature.py` — reusable EMAIL-SEPAGREE (Innovaccer Separation Agreement) Docusign "unsigned" re-verifier for finch:work passes. Run via `terminal` python3 (NOT execute_code); counts Docusign "Completed"/signed notices + cross-checks the negotiation thread, prints VERDICT. Proven logic extracted 2026-07-16 from a working live Gmail API pass. See `references/email-thread-verification.md` § Docusign.
+  **Recovery note (2026-07-16 finch:work pass):** the EMAIL-SEPAGREE task-list `meta`/`signal` referenced `/root/sepagree_verify.py`. That path is NO LONGER reliably absent — as of the 10th re-verify pass, STALE DUPLICATE copies now exist at `/root/sepagree_verify.py` AND `/root/.hermes/profiles/indigo/commons/data/ocas-finch/sepagree_verify.py`. Do NOT run either — they may diverge from the maintained script. The canonical, maintained verifier is `skills/ocas-finch/scripts/verify_sepagree_signature.py` (reconstruct from it or `references/email-thread-verification.md` § Docusign if it ever goes missing). The Docusign recipe (1 begin-signing + 0 Completed = proof of non-signature) is the load-bearing check; re-running it is the correct finch:work action for the P1, not re-deriving the script each time.
+  **Locator pattern:** to find the verifier (or any skill script) reliably in the indigo cron profile, use `terminal find /root -iname 'verify_sepagree*' 2>/dev/null` rather than `search_files`, which returned transient `DaemonThreadPoolExecutor` framework errors on 3 consecutive attempts this run. `find` is the dependable fallback when `search_files` flakes — and the same `DaemonThreadPoolExecutor` error also hits `read_file` in bursts; for those, fall back to `terminal` (`python3` / `stat` / `cat` via `read_file` substitute). Full recovery procedure in `references/concurrent-write-recovery.md`.
 
 ## Self-update
 

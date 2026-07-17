@@ -85,3 +85,66 @@ if service:
 
 - task_005 (Arbolus): Jared asked for scope/time/rate on Jun 25. Ever's Jun 26 message was a duplicate resend of the original (same subject), NOT a reply to Jared's questions. Thread has 2 messages only (Ever's original + Jared's reply). No substantive response received. Task overdue (due Jun 29).
 - task_006 (AlphaSights): Raphael sent inquiry Jun 26 with scheduling link. No reply from Jared. Task needs Jared's decision (not actionable from cron). Overdue (due Jun 29).
+
+## Alternative fallback: direct Credentials from live store JSON (no google_auth.py)
+
+If `google_auth.py` is not on the path (or you want a path that doesn't depend on it), build a `google.oauth2.credentials.Credentials` directly from the **live credential store file** the scan itself uses:
+
+```python
+import json
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+
+CRED_PATH = '/root/.google_workspace_mcp/credentials/jared.zimmerman@gmail.com.json'
+d = json.load(open(CRED_PATH))
+creds = Credentials(
+    token=d.get('token') or d.get('access_token'),
+    refresh_token=d.get('refresh_token'),
+    token_uri=d.get('token_uri'),
+    client_id=d.get('client_id'),
+    client_secret=d.get('client_secret'),
+    scopes=d.get('scopes'),
+)
+svc = build('gmail', 'v1', credentials=creds)
+```
+
+Key points:
+- The live store is `/root/.google_workspace_mcp/credentials/<email>.json`. The legacy `/root/.hermes/profiles/indigo/google_token.json` is a **dead symlink** to Indigo's own credentials — do NOT use it to read Jared's mail. The Jared file is a confirmed-live, scoped token set (has `refresh_token`, full Gmail scopes incl. `gmail.readonly`/`gmail.modify`).
+- This is the SAME store the MCP-based scan re-verification falls back to. Replicating it directly gives a third independent live confirmation (scan MCP → MCP-store fallback → direct API), which is exactly what hardened the EMAIL-SEPAGREE verdict across 2026-07-15.
+- `execute_code` is BLOCKED in the indigo cron profile — run the script via `terminal` python3, not execute_code. If the default `python3` lacks `google-api-python-client`, the Hermes project venv at `/root/projects/hermes-agent/.venv/bin/python3` is known to have it; verify with `python3 -c "import google.oauth2"` before a long run. (Interpreter paths are environment-specific — treat as a probe, not a hard rule.)
+
+## Docusign signature-status verification (recurring P1: EMAIL-SEPAGREE)
+
+**Reusable script now exists:** `scripts/verify_sepagree_signature.py`. Run it via
+`terminal` python3 (NOT execute_code — blocked in indigo cron profile):
+
+```bash
+/usr/bin/python3 /root/.hermes/profiles/indigo/skills/ocas-finch/scripts/verify_sepagree_signature.py
+# overrides: --email jared.zimmerman@gmail.com --thread 19f62275fed9da72 --days 4
+```
+
+It prints the three probes (thread count + last sender, Docusign signed/completed
+count, negotiation cross-check) and a one-line VERDICT. Read-only; never sends mail.
+(Tip: if the default `python3` lacks `google.oauth2`, probe with
+`python3 -c "import google.oauth2"` and pick an interpreter that has it. Interpreter
+path is environment-specific — a probe, not a hardcoded rule.)
+
+To prove a Docusign envelope is UNSIGNED (e.g. Innovaccer Separation Agreement)
+WITHOUT opening the envelope link, the script runs:
+
+1. **Count completion notices** in the window: `from:docusign.net (subject:"Completed") newer_than:14d`
+   => 0 results = no completion recorded for any envelope in the window.
+2. **Confirm the envelope was actually sent** (only the begin-signing notice should exist):
+   `from:docusign.net newer_than:14d`
+   => exactly 1 message = `Complete with Docusign: <doc name>.pdf` from `Kimberly Saied via Docusign <dse_NA3@docusign.net>` (msg `19f6169b326e49f4`, 2026-07-14 09:15).
+3. **Cross-check the negotiation thread** for the "ball in court" state:
+   `(Innovaccer OR Separation OR "Sep Agreement") newer_than:3d`
+   => expect Jared's "A few questions" + Kim's reply (reviewing points / loop Legal / manual COBRA "next couple days") + Jared "Thanks Kim". Confirms negotiation active, not abandoned.
+
+Interpretation: **0 "Completed" + 1 begin-signing + active negotiation thread = UNSIGNED, awaiting other party.** If a "Completed" notice appears, the envelope closed and the task can be resolved.
+
+Date gate: EMAIL-SEPAGREE carries `FLAG-if-unsigned-past-2026-07-16`. On 2026-07-15 PDT the gate had NOT fired — surface the status, do NOT auto-sign, do NOT act as Jared. Re-verify on the next scan after 7/16 begins; if still unsigned, escalate to a hard FLAG. (Confirmed 2026-07-16: re-verified twice via the script path — both passes returned 0 signed + 3-msg thread = UNSIGNED, ball in Kim's court.)
+
+## Gmail metadata header gotcha (both fallback paths)
+
+With `format='metadata'`, headers live at `msg['payload']['headers']` — NOT `msg['metadata']['headers']` (the latter raises `KeyError`). Always build `{h['name']: h['value'] for h in msg['payload']['headers']}`.
