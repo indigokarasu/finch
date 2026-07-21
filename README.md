@@ -1,7 +1,7 @@
 # finch
 
 <p align="center">
-<img src="./assets/readme/hero.svg" width="100%" alt="Finch: self-improvement orchestrator — mines session history to detect corrections, breakthroughs, and behavioral patterns.">
+<img src="./assets/readme/hero.jpg" width="100%" alt="Finch: self-improvement orchestrator — mines session history to detect corrections, breakthroughs, and behavioral patterns.">
 </p>
 
 finch — Finch: self-improvement orchestrator — mines session history to detect corrections, breakthroughs, and behavioral patterns.
