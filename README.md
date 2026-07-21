@@ -1,22 +1,12 @@
 # finch
 
 <p align="center">
-<img src="./assets/readme/hero.jpg" width="100%" alt="Finch: self-improvement orchestrator — mines session history to detect corrections, breakthroughs, and behavioral patterns.">
+  <img src="./assets/readme/hero.jpg" width="100%" alt="Finch: mines session history for behavioral patterns, compacts memory, and emits improvement journals">
 </p>
 
-finch — Finch: self-improvement orchestrator — mines session history to detect corrections, breakthroughs, and behavioral patterns.
+Finch mines session JSONL files for corrections, breakthroughs, and repeated mistakes. It compacts MEMORY.md to stay within the 2,200 character limit, then emits journals and decision records routed to the right target: MEMORY.md for behavioral rules, skill patches for broken patterns.
 
-
-> Tell it what you need. It does the work.
-
-## What it does
-
-1. **Mines** session JSONL files for learning signals using regex pattern matching
-2. **Compacts** MEMORY.md to stay within the 2,200 char limit (dedup, re-rank, evict, compress)
-3. **Routes** each finding to the optimal target (MEMORY.md for behavioral rules, skill patches for methodologies)
-4. **Emits** OCAS Action Journals and DecisionRecords per the OCAS spec
-5. **Applies** changes with user review (weekly) or auto-applies low-risk findings (daily)
-
----
-
-*finch is part of the [OCAS Agent Suite](https://github.com/indigokarasu).*
+**Capabilities:**
+- Session history mining via regex pattern matching
+- Memory compaction with dedup, compression, and eviction
+- Auto-applies low-risk findings daily; promotes higher-risk changes for weekly review
