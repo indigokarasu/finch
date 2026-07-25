@@ -5,3 +5,11 @@ __pycache__/
 # Deprecated/trash — never publish to GitHub (untracked via auto-sync git add -A)
 archive/
 .archive/
+
+# Junk that must never publish to GitHub (untracked via auto-sync git add -A)
+OPERATOR-FYI-memory_guard.md
+TODO.md
+config.json
+archive/
+.archive/
+assets/readme/hero.svg
