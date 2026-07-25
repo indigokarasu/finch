@@ -62,6 +62,8 @@ unreadable-source gap. Anchor all probes on these shapes:
   `event["start"].get("dateTime") or event["start"].get("date")` (all-day events have `date`,
   timed events have `dateTime`). Don't assume `startTime`.
 
+- **Gmail `messages().batchGet()` does NOT exist on the installed googleapiclient (CONFIRMED 2026-07-25 finch:scan):** calling `svc.users().messages().batchGet(...)` on the established build (`disc.build("gmail","v1", credentials=creds, cache_discovery=False)`) raises `AttributeError: 'Resource' object has no attribute 'batchGet'`. The Gmail API offers batchGet over raw HTTP, but THIS client surface does not expose it (version/model quirk of the pinned google-api-python-client). **Do NOT reach for batchGet in an ad-hoc puller — it fails immediately.** Instead iterate per-id with `messages().get(userId="me", id=mid, format="metadata", metadataHeaders=[...]).execute()` (exactly what the canonical `scripts/gws_direct_puller.py` already does — prefer running it over hand-rolling a new puller, which also risks duplicating the canonical script and creating stale-drift copies). For finch:scan's ~100 metadata fetches the per-id loop takes a few seconds and is fully adequate; only switch to true HTTP batching (`googleapiclient.http.BatchHttpRequest`, multipart/mixed) if profiling shows a real bottleneck.
+
 ## Usage in finch:scan
 At scan start, probe for the `mcp__google_workspace__*` namespace (tool_surface probe).
 - If PRESENT → use MCP proxy (tool_describe → tool_call).
