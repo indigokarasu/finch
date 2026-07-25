@@ -129,5 +129,5 @@ When OAuth failure is confirmed as "needs re-auth":
 
 ## Confirmed Cases
 
-- **2026-06-28 task_019**: <agent-email> refresh token revoked. email:check cron (25c06979ccc7) failing every 10 min with HTTP 400. Confirmed via direct refresh test that token is invalid_grant. Marked task_019 as `blocked`. Auth URL generated for 9-scope set.
-- **2026-06-29 task_019 (expanded)**: Same OAuth revocation now confirmed affecting `monitor:list` (39b7edc44b35) AND `ocas-tasks/tasks_monitor.py`. 3+ components failing from single token revocation. All recover once user re-authenticates.
+- **2026-06-28 task-<id>**: <agent-email> refresh token revoked. email:check cron (25c06979ccc7) failing every 10 min with HTTP 400. Confirmed via direct refresh test that token is invalid_grant. Marked task-<id> as `blocked`. Auth URL generated for 9-scope set.
+- **2026-06-29 task-<id> (expanded)**: Same OAuth revocation now confirmed affecting `monitor:list` (39b7edc44b35) AND `ocas-tasks/tasks_monitor.py`. 3+ components failing from single token revocation. All recover once user re-authenticates.

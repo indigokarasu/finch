@@ -38,7 +38,7 @@ When inspecting `~/.hermes/cron/jobs.json` directly (because the `cronjob` tool 
 
 ## Key Decision Rule
 
-If the only findings are transient provider errors AND the provider is reachable (HTTP 200), the correct outcome is "monitoring" — NOT escalation, NOT config changes, NOT job re-registration. The stuck scheduler will self-heal once the provider recovers. This follows ocas-custodian's transient-error decision rules.
+If the only findings are transient provider errors AND the provider is reachable (HTTP 200), the correct outcome is "monitoring" — NOT escalation, NOT config changes, NOT job re-registration. The stuck scheduler will self-heal once the provider recovers. This follows <other-ocas-skill>'s transient-error decision rules.
 
 ## Cross-Reference: Custodian's Recurrence Pattern Taxonomy
 
@@ -48,4 +48,4 @@ When triaging errors that have recurred across multiple scans, Custodian's RCA f
 - **Pattern C** (different root cause, same symptom): The aggregated task contains multiple distinct causes behind one fingerprint. Decompose into sub-fingerprints before fixing.
 - **Pattern E** (cascade trigger): The error only occurs when another specific job/error fires first. Fix the upstream trigger, not the downstream symptom.
 
-See `ocas-custodian/references/root-cause-analysis.md` for the full taxonomy and drilldown procedure.
+See `<other-ocas-skill>/references/root-cause-analysis.md` for the full taxonomy and drilldown procedure.

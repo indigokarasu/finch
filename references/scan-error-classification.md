@@ -35,7 +35,7 @@ When finch:scan reads cron health data, it must classify errored jobs into disti
    - **interpreter-shutdown**: LOW (was MEDIUM, corrected 2026-06-28) — **always transient**. Python `concurrent.futures` raises this when an executor schedules work during interpreter shutdown (process cleanup). The executor state resets between runs, so the next scheduled run succeeds without intervention. Confirmed: 3 jobs hit this on Jun 23 (single gateway restart), all recovered on next run. Create a monitoring task at most — never HIGH or MEDIUM. Only escalate to MEDIUM if 3+ CONSECUTIVE failures persist after the job has re-run at least once.
    - **missing-module**: MEDIUM — a Python package required by a cron script is not importable in the runtime environment. Not transient (won't self-resolve). **However**: always verify the module is actually missing before attempting a fix — check `python3 -c "import <module>"` in the venv. The scan may report a ModuleNotFoundError that was transient (package was installed between scan and work). Fix (if confirmed missing): `pip install <module>` in the venv that runs the cron. Confirmed 2026-06-28: `email:check` (25c06979ccc7) was reported as missing `googleapiclient`, but `python3 -c "from googleapiclient.errors import HttpError"` succeeded — the error was transient. Job had `last_status: ok`, `consecutive_failures: 0`.
    - **provider-error**: LOW — `RuntimeError: Provider returned error` indicates the LLM provider (e.g., OpenRouter) returned a transient error. These self-resolve on the next run. Only escalate to MEDIUM if the same job fails with this error for 3+ consecutive runs. Confirmed 2026-06-28: haiku:morning-scan, taste:scan, and 10khr-grind all hit this simultaneously — suggests a provider-side outage, not individual job issues.
-   - **provider-http400**: MEDIUM — HTTP 400 from LLM provider endpoints (NOT OAuth). Distinct from `provider-error` (RuntimeError) and `oauth-token-expired` (HTTP 400 on oauth2.googleapis.com). When 4+ jobs fail simultaneously with HTTP 400, it suggests a systemic provider credential or configuration issue (e.g., API key expired, account billing issue, provider rejecting request format). Escalate to HIGH if it persists across consecutive runs. Confirmed 2026-06-29: 4 jobs (custodian:light, sands:conflict-scan, dispatcher, Koda Dispatcher) failed simultaneously with HTTP 400 — NOT OAuth-related, NOT RuntimeError.
+   - **provider-http400**: MEDIUM — HTTP 400 from LLM provider endpoints (NOT OAuth). Distinct from `provider-error` (RuntimeError) and `oauth-token-expired` (HTTP 400 on oauth2.googleapis.com). When 4+ jobs fail simultaneously with HTTP 400, it suggests a systemic provider credential or configuration issue (e.g., API key expired, account billing issue, provider rejecting request format). Escalate to HIGH if it persists across consecutive runs. Confirmed 2026-06-29: 4 jobs (<other-ocas-skill>:light, sands:conflict-scan, dispatcher, Koda Dispatcher) failed simultaneously with HTTP 400 — NOT OAuth-related, NOT RuntimeError.
    - **investigate** (error=None with failures>0): LOW — transient or no-detail, monitor
    - **script-exit**: varies — check stdout for root cause
 
@@ -51,7 +51,7 @@ When finch:scan reads cron health data, it must classify errored jobs into disti
 
 | Category | Count | Severity | Affected Jobs | Root Cause |
 |----------|-------|----------|---------------|------------|
-| certifi CA bundle | 5 | HIGH | haiku:morning-scan, haiku:follow-maintenance, scout:research, bower:scan, scout:sources-refresh | `cacert.pem` missing from venv path |
+| certifi CA bundle | 5 | HIGH | haiku:morning-scan, haiku:follow-maintenance, scout:research, <other-ocas-skill>:scan, scout:sources-refresh | `cacert.pem` missing from venv path |
 | missing-script / path-not-found | 6 | HIGH | monitor:email, monitor:koda-issues, monitor:list, monitor:styx, gens:sync, dispatch:triage-morning | Script file not found at configured path |
 | delivery-error | 2 | HIGH | dispatch:briefing-deliver, (monitor:email also has delivery_err) | Job ran but output could not be delivered to destination |
 
@@ -97,7 +97,7 @@ When finch:scan reads cron health data, it must classify errored jobs into disti
 4. `monitor:list` was previously classified as `script-exit-code-1` — but the exit code 1 was actually from `tasks_monitor.py` failing on OAuth. When investigating "exit code 1" errors, always run the script directly to capture the actual stderr — the traceback reveals the true root cause.
 
 **Action items:**
-- oauth-token-revoked → Same resolution as task_019. User must re-authorize Google OAuth. All 3+ affected components recover automatically once token is restored.
+- oauth-token-revoked → Same resolution as task-<id>. User must re-authorize Google OAuth. All 3+ affected components recover automatically once token is restored.
 - **missing-script (email:check, historical)** → In earlier scans, the cron job `25c06979ccc7` was reported as pointing to a non-existent `email_check.py`. This was incorrect — the script exists at `~/.hermes/scripts/email_check.py` and fails with `HTTPError 400` from OAuth revocation, not a missing file. The actual email scanning scripts in the ocas-dispatch skill directory are `gmail_scan.py` and `check_unread.py`. When investigating "missing script" errors, always verify with `ls -la <path>` before concluding the file doesn't exist — the error may be a downstream import failure (e.g., `google_auth_mcp.py` failing on token refresh) rather than the script file itself being missing.
 
 ## Example: 2026-06-29 Scan #3 (17:11 UTC)
@@ -108,7 +108,7 @@ When finch:scan reads cron health data, it must classify errored jobs into disti
 |----------|-------|----------|---------------|------------|
 | oauth-token-revoked | 2 | CRITICAL | email:check (25c06979ccc7), monitor:list (39b7edc44b35) | `HTTPError 400` on `oauth2.googleapis.com/token`. Single root cause, wide blast radius. |
 | missing-script (historical) | 1 | HIGH | email:check (25c06979ccc7) | ~~Script `email_check.py` does not exist~~ INCORRECT — the script exists at `~/.hermes/scripts/email_check.py` but fails on OAuth. This was a misclassification in earlier scans. The job's true error is oauth-token-revoked. |
-| rate-limit | 1 | LOW | bower:scan (d751b1530df5) | `HTTP 429` — transient provider rate limit. |
+| rate-limit | 1 | LOW | <other-ocas-skill>:scan (d751b1530df5) | `HTTP 429` — transient provider rate limit. |
 
 **Key observations — email:check double-counting:**
 1. `email:check` appears in BOTH oauth-token-revoked AND missing-script categories. The script file doesn't exist, so it exits code 1 before even attempting OAuth. The OAuth error on this job is from a previous run when the script existed but the token was already revoked.
@@ -116,7 +116,7 @@ When finch:scan reads cron health data, it must classify errored jobs into disti
 3. The fix for `email:check` is trivial: update the cron's `script` field to point to `gmail_scan.py` or `check_unread.py` (whichever is the correct email scanning script), or remove the job if it's redundant with another email-checking cron.
 
 **Action items:**
-- oauth-token-revoked → Same resolution as task_019. User must re-authorize Google OAuth. All affected components recover automatically once token is restored.
+- oauth-token-revoked → Same resolution as task-<id>. User must re-authorize Google OAuth. All affected components recover automatically once token is restored.
 - ~~missing-script → Update email:check script path. 30-second fix.~~ INCORRECT — the script exists; the real error is OAuth. The missing-script classification was wrong.
 - rate-limit → Monitor.
 
@@ -128,7 +128,7 @@ When finch:scan reads cron health data, it must classify errored jobs into disti
 |----------|-------|----------|---------------|------------|
 | oauth-token-revoked | 2 | CRITICAL | email:check (25c06979ccc7), monitor:list (39b7edc44b35) | Both refreshed error at 00:02:52 today. Same `HTTPError 400` on `oauth2.googleapis.com/token`. OAuth still unresolved from previous scan. |
 
-**Key insight — task consolidation**: The `monitor:list` job was previously classified as a separate `script-exit-code-1` task (task_022). Investigation confirmed it shares the exact same root cause as `email:check` — both fail on `google_auth_mcp._refresh_token` → `HTTPError 400`. **Correct action**: Mark the duplicate task (task_022) as `done` with resolution "duplicate of task_019." Do NOT create separate tasks for each job when the error fingerprint is identical.
+**Key insight — task consolidation**: The `monitor:list` job was previously classified as a separate `script-exit-code-1` task (task-<id>). Investigation confirmed it shares the exact same root cause as `email:check` — both fail on `google_auth_mcp._refresh_token` → `HTTPError 400`. **Correct action**: Mark the duplicate task (task-<id>) as `done` with resolution "duplicate of task-<id>." Do NOT create separate tasks for each job when the error fingerprint is identical.
 
 **Workflow signal**: The P4 Timeline live write (kanban task `t_b8179ffa`) is actively running as a background process (PID via `ps aux | grep run_ingest`). This is an in-progress session that should be noted but not interrupted.
 
@@ -151,16 +151,16 @@ When finch:scan reads cron health data, it must classify errored jobs into disti
 
 | Category | Count | Severity | Affected Jobs | Root Cause |
 |----------|-------|----------|---------------|------------|
-| provider-http400 | 4 | MEDIUM | custodian:light, sands:conflict-scan, dispatcher, Koda Dispatcher | HTTP 400 from LLM provider — NOT OAuth, NOT RuntimeError. 4 jobs simultaneously = systemic credential/config issue. |
-| rate-limit | 1 | LOW | bower:scan | HTTP 429 — transient provider rate limit. |
+| provider-http400 | 4 | MEDIUM | <other-ocas-skill>:light, sands:conflict-scan, dispatcher, Koda Dispatcher | HTTP 400 from LLM provider — NOT OAuth, NOT RuntimeError. 4 jobs simultaneously = systemic credential/config issue. |
+| rate-limit | 1 | LOW | <other-ocas-skill>:scan | HTTP 429 — transient provider rate limit. |
 
 **Key observations — new error fingerprint (provider-http400):**
 1. These are HTTP 400 errors from LLM provider endpoints (e.g., OpenRouter `/chat/completions`), NOT from `oauth2.googleapis.com/token`. The error message format is `RuntimeError: HTTP 400: Provider returned error` or similar.
 2. Distinct from `provider-error` (RuntimeError without HTTP status) and `oauth-token-expired` (HTTP 400 specifically on Google's token endpoint).
 3. When 4+ unrelated jobs fail simultaneously with HTTP 400, the root cause is likely: expired API key, billing issue, provider-side migration, or request format change.
 4. **Action**: Check provider dashboard for API key status, billing, and request format changes. Do NOT assume transient — HTTP 400 will not self-resolve like HTTP 429 or RuntimeError.
-5. The OAuth revocation (task_019) is a separate issue — it blocks Google Workspace API, not LLM provider calls.
-6. **Subset-failure diagnostic (confirmed 2026-06-29):** If some jobs with the SAME skill succeed while others fail with HTTP 400, it is NOT a credential issue (those are all-or-nothing). This was confirmed when `custodian:deep` (ocas-custodian) ran OK at 14:12 while `custodian:light` (same skill) failed at 14:00. Credential/auth failures affect ALL jobs using that credential uniformly. Subset failure = transient provider-side issue affecting specific sessions.
+5. The OAuth revocation (task-<id>) is a separate issue — it blocks Google Workspace API, not LLM provider calls.
+6. **Subset-failure diagnostic (confirmed 2026-06-29):** If some jobs with the SAME skill succeed while others fail with HTTP 400, it is NOT a credential issue (those are all-or-nothing). This was confirmed when `<other-ocas-skill>:deep` (<other-ocas-skill>) ran OK at 14:12 while `<other-ocas-skill>:light` (same skill) failed at 14:00. Credential/auth failures affect ALL jobs using that credential uniformly. Subset failure = transient provider-side issue affecting specific sessions.
 
 **Action items:**
 - provider-http400 → Check LLM provider API key and account status. Escalate to HIGH if not resolved by next scan.
@@ -197,7 +197,7 @@ A job has an active error if ANY of:
 
 ### The Misdiagnosis Pattern (Scan #13 → #14, June 30)
 
-**What happened:** Scan #13 read jobs.json, saw 3 jobs with `last_status: "error"` and HTTP 400/429 error messages, and created task_019 (CRITICAL: "Google OAuth refresh token revoked") and task_014 (CRITICAL: "Provider errors blocking all Google Workspace"). These tasks persisted for 24+ hours, blocking email/calendar/drive inspection. **All 3 jobs actually had `consecutive_failures: 0`** — the errors were transient LLM provider issues (owl-alpha/OpenRouter HTTP 400/429) that had already self-resolved.
+**What happened:** Scan #13 read jobs.json, saw 3 jobs with `last_status: "error"` and HTTP 400/429 error messages, and created task-<id> (CRITICAL: "Google OAuth refresh token revoked") and task-<id> (CRITICAL: "Provider errors blocking all Google Workspace"). These tasks persisted for 24+ hours, blocking email/calendar/drive inspection. **All 3 jobs actually had `consecutive_failures: 0`** — the errors were transient LLM provider issues (owl-alpha/OpenRouter HTTP 400/429) that had already self-resolved.
 
 **The rule that was violated:** The doc already stated "most reliable single indicator is consecutive_failures" but didn't make it a hard gate on task creation. A job with `consecutive_failures: 0` is **healthy** — the `last_error` string is a stale artifact from a previous failed run.
 
@@ -209,7 +209,7 @@ Before creating any task from cron error data:
 2. jobs have `consecutive_failures > 0`** — report "cron health: all clear" and do NOT create error tasks, even if some jobs show `last_status: "error"`.
 3. **If `consecutive_failures > 0` exists on OAuth-dependent jobs** — THEN classify as `oauth-token-expired` (CRITICAL) or `provider-http400` (MEDIUM) per the fingerprint table above.
 
-**Confirmed 2026-06-30 (Scan #14):** All 140 jobs show `consecutive_failures: 0`. The 4 jobs with `last_status: "error"` (haiku:follow-maintenance, sands:conflict-scan, bower:scan, custodian:light) all had `consecutive_failures: 0` — indicating transient, already-recovered errors. Correct action: mark the stale CRITICAL tasks as done, report "all clear."
+**Confirmed 2026-06-30 (Scan #14):** All 140 jobs show `consecutive_failures: 0`. The 4 jobs with `last_status: "error"` (haiku:follow-maintenance, sands:conflict-scan, <other-ocas-skill>:scan, <other-ocas-skill>:light) all had `consecutive_failures: 0` — indicating transient, already-recovered errors. Correct action: mark the stale CRITICAL tasks as done, report "all clear."
 
 ## Key Rules
 

@@ -55,11 +55,11 @@ A message may be sender-noise yet subject-actionable. Apply tags by subject:
 | Tag | Trigger (subject contains) | Example |
 |-----|----------------------------|---------|
 | `SECURITY` | `new sign-in`, `third-party oauth`, `oauth application` | OpenAI sign-in, GitHub OAuth add |
-| `FINANCE-REVIEW` | `charged twice`, `double charge`, `unusual charge` | Capital One $155 double-charge |
-| `ACTION` | `[action required]`, `transition your` | Google Cloud gsutil deprecation |
-| `INVITE` | `invite`, `dinner`, `private dinner` | <event-invite> |
+| `FINANCE-REVIEW` | `charged twice`, `double charge`, `unusual charge` | <bank> double-charge |
+| `ACTION` | `[action required]`, `transition your` | <service> deprecation notice |
+| `INVITE` | `invite`, `dinner`, `private dinner` | <event invite> |
 | `CALL` | `tried giving you a call`, `just called` | <callback> |
-| `<OWNER>-SENT>` | sender is `<user-google-email>` (outbound) | <outbound-thread> reply |
+| `<OWNER>-SENT` | sender is `<user-google-email>` (outbound) | <outbound reply> |
 | `REPLY-THREAD` | `re:` + known thread | — |
 
 ## Step 4 — Route
@@ -68,14 +68,13 @@ A message may be sender-noise yet subject-actionable. Apply tags by subject:
 - `FINANCE-REVIEW` / `ACTION` / `INVITE` / `CALL` → NEW task, priority by impact
   (finance = P2, others P3), `status: open`, `blocked_on: <operator>` (agent cannot
   log into banks/calendars/decide engagements).
-- `<OWNER>-SENT>` / `REPLY-THREAD` outbound → NOT actionable; exclude from tasks.
+- `<OWNER>-SENT` / `REPLY-THREAD` outbound → NOT actionable; exclude from tasks.
 
-## Reference run result (2026-07-22)
-- 113 unique messages, 6 pages.
-- New actionable: <bank> double-charge (P2); Google Cloud
-  gsutil→gcloud Mar-2027 (P4 advisory); <event-invite> (P3); <callback> (P3).
-- Carried forward: GitHub OAuth (<operator> verify); OpenAI 3× sign-ins (<operator>'s own
-  device, legit).
-- Excluded as noise: ~20 Alpaca order-executed, ~5 NOBULL, ~4 Collective2,
-  Amazon x N, Ladders, Block/Salesforce rejections, Hawaiian Electric, Zillow,
-  lululemon, Modernism Week, Flying Blue, etc.
+## Reference run result (illustrative)
+- ~100 unique messages per 2-day window across 6 pages; page-1-only would miss ~60%.
+- New actionable: <bank> double-charge (P2); <service> deprecation (P4 advisory);
+  <event invite> (P3); <callback> (P3).
+- Carried forward: <security> OAuth (<operator> verify); <provider> sign-ins
+  (<operator>'s own device, legit).
+- Excluded as noise: ~20 <broker> order-executed, ~5 <broker>, ~4 <broker>,
+  plus generic promotional/social/notification senders (see noise-domain list above).

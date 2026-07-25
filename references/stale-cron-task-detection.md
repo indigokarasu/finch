@@ -10,7 +10,7 @@ When a task references cron job names or script file paths, verify before acting
 
 1. **Check `hermes cron list` text output**: Shows only active jobs. Absence from this list means the job is either disabled or deleted.
 2. **Check `jobs.json`**: Parse `~/.hermes/profiles/<profile>/cron/jobs.json` to find disabled (`enabled: false`) jobs.
-3. **Check if scripts exist on disk**: If the task mentions a script file (e.g., `brief:email-morning` → `email_morning_brief.py`), verify with `find` or `terminal("which <script>")`.
+3. **Check if scripts exist on disk**: If the task mentions a script file (e.g., `<other-ocas-skill>:email-morning` → `email_morning_brief.py`), verify with `find` or `terminal("which <script>")`.
 4. **Check for pipeline coverage**: Even if a cron job was removed, its function may be handled by a different active pipeline. Check if the same output is produced by other jobs.
 
 ## Resolution
@@ -23,8 +23,8 @@ If the cron job is disabled but its function is covered by an active pipeline:
 
 ## Example (Confirmed 2026-06-29)
 
-**task_015**: "Fix scripts or remove disabled cron jobs on next maintenance window"
-- Referenced: `brief:email-morning` and `brief:email-evening`
+**task-<id>**: "Fix scripts or remove disabled cron jobs on next maintenance window"
+- Referenced: `<other-ocas-skill>:email-morning` and `<other-ocas-skill>:email-evening`
 - Checked `hermes cron list`: both absent (not even disabled — fully deleted)
 - Checked `jobs.json`: absent
 - Checked scripts: `email_morning_brief.py` and `email_evening_brief.py` do not exist

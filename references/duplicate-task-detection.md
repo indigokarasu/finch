@@ -2,7 +2,7 @@
 
 ## Problem
 
-The task-list.json can accumulate duplicate task entries when finch:scan re-creates a task that already exists (e.g., from a scan that runs before the previous scan's "done" status is written, or from concurrent scan jobs). Confirmed 2026-06-29: two `task_025` entries existed with identical signals (bower:scan 429 monitoring) but different `created` timestamps.
+The task-list.json can accumulate duplicate task entries when finch:scan re-creates a task that already exists (e.g., from a scan that runs before the previous scan's "done" status is written, or from concurrent scan jobs). Confirmed 2026-06-29: two `task-<id>` entries existed with identical signals (<other-ocas-skill>:scan 429 monitoring) but different `created` timestamps.
 
 ## Detection Pattern
 
@@ -34,4 +34,4 @@ When duplicates are found:
 
 ## Confirmed
 
-2026-06-29T13:30Z — finch:work found two `task_025` entries. Removed the later one (created 2026-06-29T19:06:36), kept the earlier (created 2026-06-29T17:11:51Z).
+2026-06-29T13:30Z — finch:work found two `task-<id>` entries. Removed the later one (created 2026-06-29T19:06:36), kept the earlier (created 2026-06-29T17:11:51Z).

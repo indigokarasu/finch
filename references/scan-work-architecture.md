@@ -81,7 +81,7 @@ Google OAuth failures in scan context have TWO distinct root causes. Both produc
 
 #### Root Cause A: Credentials file missing (FileNotFoundError)
 
-The `google_auth_mcp.py` helper (used by `email_check.py`, `monitor_email.py`, and other scripts) maps account aliases ("<owner>", "indigo") to email addresses, then looks for credential files. If the file is missing, `_load_creds` raises `FileNotFoundError: No credentials file for <alias>`.
+The `google_auth_mcp.py` helper (used by `email_check.py`, `monitor_email.py`, and other scripts) maps account aliases ("<owner>", "<agent>") to email addresses, then looks for credential files. If the file is missing, `_load_creds` raises `FileNotFoundError: No credentials file for <alias>`.
 
 - **Credential file locations** (two systems, both must be checked):
   1. `<gworkspace-creds>/credentials/<email>.json` — primary location for workspace-mcp scripts
@@ -121,7 +121,7 @@ The `workspace-mcp-fixed` wrapper script chains to `workspace-mcp` which invokes
 - **OAuth token revoked (Root Cause B)**: `invalid_grant` from Google. Same impact as Root Cause A. More severe than MCP-unavailable.
 - **Diagnosis order**: (1) Check if MCP tools are registered. (2) Check if the MCP server binary starts (`workspace-mcp-fixed`). (3) Check if credential files exist at both paths. (4) If files exist, test the refresh token. This four-step diagnosis reliably identifies which root cause is in play.
 
-**Confirmed 2026-06-28 (scan 15:07)**: Google OAuth token was revoked (Root Cause B). Created task_019 as critical.
+**Confirmed 2026-06-28 (scan 15:07)**: Google OAuth token was revoked (Root Cause B). Created task-<id> as critical.
 **Confirmed 2026-06-28 (scan 19:02)**: Google OAuth credentials files were missing entirely (Root Cause A). `FileNotFoundError: No credentials file for <owner>` from `email_check.py`.
 
 **Limitations:**
@@ -156,7 +156,7 @@ When a finch:work task involves a failing cron job, before investing effort in d
 2. If yes, the failing job is redundant — disable it rather than fix it
 3. Set `enabled=False` + `paused_reason` in `jobs.json` (the `hermes cron pause` CLI can't find profile-specific jobs — edit the file directly)
 
-Confirmed 2026-06-27: `brief:email-morning` and `brief:email-evening` were failing but redundant with the working `sands:*-brief` → `dispatch:briefing-deliver` pipeline.
+Confirmed 2026-06-27: `<other-ocas-skill>:email-morning` and `<other-ocas-skill>:email-evening` were failing but redundant with the working `sands:*-brief` → `dispatch:briefing-deliver` pipeline.
 
 ### Dispatch journal as fallback data source
 

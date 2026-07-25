@@ -79,7 +79,7 @@ After data migrations or skill updates, `.bak` files accumulate under `~/.hermes
 find ~/.hermes/commons/data -name "*.bak*" -mtime +1 -delete
 ```
 
-Common sources: `ocas-taste/*.bak.YYYYMMDD`, `ocas-custodian/issues.jsonl.bak`, `ocas-dispatch/threads.jsonl.bak`.
+Common sources: `ocas-taste/*.bak.YYYYMMDD`, `<other-ocas-skill>/issues.jsonl.bak`, `ocas-dispatch/threads.jsonl.bak`.
 
 ## Stale Lock File Detection
 
