@@ -83,8 +83,8 @@ if service:
 
 ## Confirmed 2026-06-28
 
-- task_005 (<employer>): <operator> asked for scope/time/rate on Jun 25. Ever's Jun 26 message was a duplicate resend of the original (same subject), NOT a reply to <operator>'s questions. Thread has 2 messages only (Ever's original + <operator>'s reply). No substantive response received. Task overdue (due Jun 29).
-- task_006 (AlphaSights): Raphael sent inquiry Jun 26 with scheduling link. No reply from <operator>. Task needs <operator>'s decision (not actionable from cron). Overdue (due Jun 29).
+- task-<id> (<employer>): <operator> asked for scope/time/rate on Jun 25. Ever's Jun 26 message was a duplicate resend of the original (same subject), NOT a reply to <operator>'s questions. Thread has 2 messages only (Ever's original + <operator>'s reply). No substantive response received. Task overdue (due Jun 29).
+- task-<id> (AlphaSights): Raphael sent inquiry Jun 26 with scheduling link. No reply from <operator>. Task needs <operator>'s decision (not actionable from cron). Overdue (due Jun 29).
 
 ## Alternative fallback: direct Credentials from live store JSON (no google_auth.py)
 

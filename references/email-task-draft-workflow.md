@@ -86,7 +86,7 @@ Do NOT:
 
 The draft will be picked up by the next interactive `dispatch.draft` session that has valid Gmail auth.
 
-**Confirmed:** 2026-06-28 — task_001 RISD vineyard RSVP. Gmail token expired (May 2), `google_auth.py` refresh failed with "Could not determine client ID". Cached `all_facts.jsonl` contained thread ID, subject, sender. Drafted RSVP locally and saved to `drafts.jsonl`.
+**Confirmed:** 2026-06-28 — task-<id> RISD vineyard RSVP. Gmail token expired (May 2), `google_auth.py` refresh failed with "Could not determine client ID". Cached `all_facts.jsonl` contained thread ID, subject, sender. Drafted RSVP locally and saved to `drafts.jsonl`.
 
 ## What NOT to Do
 
@@ -132,7 +132,7 @@ Same as above — mark completed with draft_id and outcome.
 
 ## Confirmed Example (2026-06-26)
 
-**Task:** COC proof for <contact-name> (task_004, high priority)
+**Task:** COC proof for <contact-name> (task-<id>, high priority)
 - Source thread: Ravon Logan said he didn't receive Shannon's signed COC
 - <operator>'s last msg (Jun 25): "it was signed, but she signed it bigger, over the old signature."
 - Stall: No response from Ravon since Jun 25. Last msg was explanatory, not interrogative.
@@ -143,7 +143,7 @@ Same as above — mark completed with draft_id and outcome.
 
 ## Confirmed Example (2026-06-25)
 
-**Task:** Bywater COC for <contact-name> (task_005, high priority)
+**Task:** Bywater COC for <contact-name> (task-<id>, high priority)
 - Source thread: Ravon Logan (Bywater compliance) said Shannon's signed COC wasn't received
 - Problem: Shannon signed over old signature (illegible)
 - Action: Drafted email to Shannon (<third-party-email>) asking her to re-sign cleanly and send to Ravon (rlogan@<third-party-domain>)

@@ -28,7 +28,7 @@ If the current scan finds errors a prior scan's `cycle_note` claimed absent:
 
 ## Cadence-nuance correction (added 2026-07-18)
 The original "had been erroring every 10m ... since 01:52Z" wording was **itself imprecise** — the per-run artifacts show the <other-ocas-skill> job errored ONCE at 01:52:22, then ran OK at 02:14:58 and 02:26:28. It was a *single* transient error (an inherited-env gap after a gateway restart), not a sustained every-10m failure. The scan's `cycle_note` over-claimed a cadence the artifacts contradicted.
-**Lesson:** when a scan asserts a sustained/recurring cadence ("erroring every Nm since T"), cross-check it against the job's per-run output files (`cron/output/<jobid>/`) and `jobs.json` `last_error` before trusting the cadence. A single error sandwiched between two OKs is a transient gap, not a persistent loop. Source of truth = the artifacts, not the scan summary. (The env-propagation root cause + the durable `.env` fix + a re-runnable verification script live in `skills/ocas-custodian/references/kanban-board-env-keyerror-2026-07-18.md` and `scripts/verify_kanban_env.py`.)
+**Lesson:** when a scan asserts a sustained/recurring cadence ("erroring every Nm since T"), cross-check it against the job's per-run output files (`cron/output/<jobid>/`) and `jobs.json` `last_error` before trusting the cadence. A single error sandwiched between two OKs is a transient gap, not a persistent loop. Source of truth = the artifacts, not the scan summary. (The env-propagation root cause + the durable `.env` fix + a re-runnable verification script live in `skills/<other-ocas-skill>/references/kanban-board-env-keyerror-2026-07-18.md` and `scripts/verify_kanban_env.py`.)
 
  ## Incident (2026-07-22, finch:scan ~23:05Z) — scope-miss variant
 

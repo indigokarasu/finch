@@ -16,7 +16,7 @@ A finch task referenced a failing CI run on `<user-handle>/BOOK` PR #871 (run `2
    gh api repos/<owner>/<repo>/actions/runs/<GREEN_ID> --jq '.head_sha'
    git -C <repo> rev-parse HEAD          # local checkout of the branch
    ```
-   If they match, the branch is fixed at its current head — the failing run was a prior revision. (For TASK-034 both equaled `a366bde4…`.)
+   If they match, the branch is fixed at its current head — the failing run was a prior revision. (For <task-id> both equaled `a366bde4…`.)
 3. **Fetch the PR head ref locally** (the remote branch may not be advertised by name):
    ```
    git fetch origin refs/pull/<PR>/head:fix/pr-head

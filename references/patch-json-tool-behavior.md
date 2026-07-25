@@ -42,21 +42,21 @@ For multi-field updates or large JSON restructuring, OR if the file was read wit
 2. `execute_code` is BLOCKED in the indigo cron profile — use `terminal` python3, never execute_code for JSON edits.
 3. Validate-after-edit with `terminal python3 -c "import json; json.load(open('<path>')); print('VALID')"` — `read_file`'s view of a JSON file is NOT validation (it can display trailing-comma corruption as valid).
 
-## Example (task_023 resolution, 2026-06-29)
+## Example (task-<id> resolution, 2026-06-29)
 
 ```json
 // First attempt FAILED (escape-drift):
 patch(mode='replace',
-  old_string="      \"id\": \"task_023\",\n      \"source\": \"kanban\",\n      \"signal\": \"P4 Timeline...\", ...",
-  new_string="      \"id\": \"task_023\",\n      ...new fields...")
+  old_string="      \"id\": \"task-<id>\",\n      \"source\": \"kanban\",\n      \"signal\": \"P4 Timeline...\", ...",
+  new_string="      \"id\": \"task-<id>\",\n      ...new fields...")
 
 // Second attempt SUCCEEDED (plain quotes from read_file):
 patch(mode='replace',
-  old_string=      "id": "task_023",
+  old_string=      "id": "task-<id>",
       "source": "kanban",
       "signal": "P4 Timeline live write (t_b8179ffa) is actively running...",
       "action": "Monitor P4 background process for completion...",
-  new_string=      "id": "task_023",
+  new_string=      "id": "task-<id>",
       "source": "kanban",
       "signal": "P4 Timeline live write COMPLETE...",
       "action": "Done.",

@@ -14,12 +14,12 @@ When Google Workspace OAuth refresh token is revoked or expired, ALL dependent c
 | Job | Schedule | Uses |
 |-----|----------|------|
 | email:check | */10 * * * * | Gmail API |
-| custodian:light | 0 * * * * | Gmail API (for monitoring) |
+| <other-ocas-skill>:light | 0 * * * * | Gmail API (for monitoring) |
 | haiku:follow-maintenance | 0 16 * * 1 | Gmail API |
 | sands:conflict-scan | 0 14 * * * | Calendar API |
 | dispatcher | */2 * * * * | Gmail API |
 | Koda Dispatcher | every 5m | Gmail API |
-| bower:scan | 0 9 * * * | Drive API (may show 429 instead of 400) |
+| <other-ocas-skill>:scan | 0 9 * * * | Drive API (may show 429 instead of 400) |
 
 ## Diagnostic Steps
 

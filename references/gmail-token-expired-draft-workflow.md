@@ -97,11 +97,11 @@ When draft CANNOT be created (no cached data):
 
 When drafting from cached data, **always verify the recipient email against the actual thread data** (`threads.jsonl`, `chronicle_queue.jsonl`, or `messages.jsonl`). Do NOT rely on task descriptions or prior drafts for recipient info — they may be wrong.
 
-**Confirmed 2026-06-28 task_004**: A prior draft (Jun 24) for the COC proof thread was addressed to `contact@example.com` — but the actual recipient was Ravon Logan at `rlogan@<third-party-domain>`. The task description did not contain the recipient email. Only by searching `chronicle_queue.jsonl` for the thread ID was the correct recipient identified. Sending to the wrong address would have delayed a time-sensitive medical document (CoC proof due Jul 1).
+**Confirmed 2026-06-28 task-<id>**: A prior draft (Jun 24) for the COC proof thread was addressed to `contact@example.com` — but the actual recipient was Ravon Logan at `rlogan@<third-party-domain>`. The task description did not contain the recipient email. Only by searching `chronicle_queue.jsonl` for the thread ID was the correct recipient identified. Sending to the wrong address would have delayed a time-sensitive medical document (CoC proof due Jul 1).
 
 **Rule:** Before creating any draft, search cached data for the thread ID and extract the actual `from` / `to` addresses from the thread's messages. If the recipient in your draft doesn't match any cached message's sender, stop and investigate.
 
 ## Confirmed Cases
 
-- **2026-06-28 task_001**: RISD vineyard RSVP. Gmail token expired May 2. `all_facts.jsonl` contained thread ID `<thread-id>`, sender `contact@example.com`, subject. Successfully drafted RSVP locally and appended to `drafts.jsonl`.
-- **2026-06-28 task_004**: COC proof follow-up for <contact-name>. Gmail OAuth revoked (invalid_grant). Thread `<thread-id>` with Ravon Logan (rlogan@<third-party-domain>). Ravon confirmed Jun 25 they did NOT receive Shannon's signed doc. CoC effective date Jul 1 (next day). Drafted urgent follow-up to correct recipient (prior Jun 24 draft was wrongly addressed to contact@example.com). Draft stored as `draft-2026-06-28-coc-shannon-resend` in drafts.jsonl.
+- **2026-06-28 task-<id>**: RISD vineyard RSVP. Gmail token expired May 2. `all_facts.jsonl` contained thread ID `<thread-id>`, sender `contact@example.com`, subject. Successfully drafted RSVP locally and appended to `drafts.jsonl`.
+- **2026-06-28 task-<id>**: COC proof follow-up for <contact-name>. Gmail OAuth revoked (invalid_grant). Thread `<thread-id>` with Ravon Logan (rlogan@<third-party-domain>). Ravon confirmed Jun 25 they did NOT receive Shannon's signed doc. CoC effective date Jul 1 (next day). Drafted urgent follow-up to correct recipient (prior Jun 24 draft was wrongly addressed to contact@example.com). Draft stored as `draft-2026-06-28-coc-shannon-resend` in drafts.jsonl.

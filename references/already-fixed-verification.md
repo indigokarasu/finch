@@ -22,7 +22,7 @@ A session identifies systemic issues (e.g., "no circuit breaker", "wrong crash c
    - Guard: Does it prevent the bad outcome (e.g., breaker trip on rate-limit)?
 6. **Mark done with evidence** — If all checks pass, mark the task done with specific file:line references and test results.
 
-## Example (2026-06-29, task_023)
+## Example (2026-06-29, task-<id>)
 
 **Claimed issues:** "no circuit breaker, wrong crash classification (rc=0 after rate limit should signal rate_limited not crashed), no auto-recovery, wrong assignee routing, load balancing gap"
 

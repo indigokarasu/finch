@@ -18,7 +18,7 @@ if page1 has page_token:
 ```
 
 **Why this matters:** `newer_than:2d` returned 50 messages across 2 pages. The P1
-D.E.Shaw consulting reply (TASK-020) was on **page 2**. A page-1-only fetch would have
+D.E.Shaw consulting reply (<task-id>) was on **page 2**. A page-1-only fetch would have
 missed it and reported stale "UNVERIFIED" carried tasks as still-unverified.
 
 ## Step 2 — Batch-fetch content for ALL collected IDs

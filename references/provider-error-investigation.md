@@ -92,7 +92,7 @@ When some LLM jobs fail with HTTP 400 while others with the **same skill and pro
 **Diagnostic procedure:**
 
 1. **Identify the failing jobs** — Note which specific jobs show HTTP 400
-2. **Find working jobs with the same skill** — Query `jobs.json` for jobs sharing the `skill` field with failing jobs. If `custodian:light` (ocas-custodian) fails but `custodian:deep` (ocas-custodian) succeeds, the skill/auth config is fine.
+2. **Find working jobs with the same skill** — Query `jobs.json` for jobs sharing the `skill` field with failing jobs. If `<other-ocas-skill>:light` (<other-ocas-skill>) fails but `<other-ocas-skill>:deep` (<other-ocas-skill>) succeeds, the skill/auth config is fine.
 3. **Compare model/provider fields** — If both failing and working jobs have `model: null, provider: null` (use global default), the issue is NOT in the job config.
 4. **Conclusion** — Subset failure = transient provider-side issue affecting specific worker sessions, not a systemic credential problem.
 
@@ -100,7 +100,7 @@ When some LLM jobs fail with HTTP 400 while others with the **same skill and pro
 
 **jobs.json anomaly:** Failing jobs may show `last_run: null, next_run: null` in `jobs.json` while `hermes cron list` shows recent timestamps. This means the error occurs before state persistence — the provider rejects the request immediately, before the job can record a start time.
 
-**Resolution:** Monitor for auto-recovery. Same pattern on June 27 (task_014) self-resolved within hours. If 4+ jobs fail simultaneously with HTTP 400 for 2+ hours, check provider dashboard for account-level issues.
+**Resolution:** Monitor for auto-recovery. Same pattern on June 27 (task-<id>) self-resolved within hours. If 4+ jobs fail simultaneously with HTTP 400 for 2+ hours, check provider dashboard for account-level issues.
 
 ## When to Escalate
 
@@ -118,7 +118,7 @@ When some LLM jobs fail with HTTP 400 while others with the **same skill and pro
 
 ## Confirmed Investigation: 2026-06-28
 
-task_022: 3 jobs (haiku:morning-scan, taste:scan, 10khr-grind) with RuntimeError: Provider returned error.
+task-<id>: 3 jobs (haiku:morning-scan, taste:scan, 10khr-grind) with RuntimeError: Provider returned error.
 - All traced to OpenRouter owl-alpha transient upstream failures
 - Error modes: 429 rate limits, empty SSE streams, JSON injection errors  
 - Error count: 36 (Jun 25), 49 (Jun 26), 95 (Jun 27 peak), 28 (Jun 28 through ~09:00)
@@ -128,11 +128,11 @@ task_022: 3 jobs (haiku:morning-scan, taste:scan, 10khr-grind) with RuntimeError
 
 ## Confirmed Investigation: 2026-06-29 (subset-failure pattern)
 
-task_023: 5 jobs (custodian:light, sands:conflict-scan, dispatcher, Koda Dispatcher—BOOK, Koda Dispatcher—<user-handle>.com) with HTTP 400 from LLM provider.
-- **Key finding:** 50+ other LLM jobs running fine simultaneously (custodian:deep, haiku:*, vesper:*, mentor:*, taste:*, etc.)
-- **Misdiagnosis corrected:** task_019 incorrectly linked these to Google OAuth revocation. OAuth affects Google APIs, not LLM provider calls.
-- **Root cause:** Transient provider-side issue affecting specific worker sessions. Same pattern as June 27 (task_014) which self-resolved.
-- **Diagnostic evidence:** custodian:deep (ocas-custodian skill) ran OK at 14:12 while custodian:light (same skill) failed at 14:00 — proves it's not a credential/config issue.
+task-<id>: 5 jobs (<other-ocas-skill>:light, sands:conflict-scan, dispatcher, Koda Dispatcher—BOOK, Koda Dispatcher—<user-handle>.com) with HTTP 400 from LLM provider.
+- **Key finding:** 50+ other LLM jobs running fine simultaneously (<other-ocas-skill>:deep, haiku:*, vesper:*, mentor:*, taste:*, etc.)
+- **Misdiagnosis corrected:** task-<id> incorrectly linked these to Google OAuth revocation. OAuth affects Google APIs, not LLM provider calls.
+- **Root cause:** Transient provider-side issue affecting specific worker sessions. Same pattern as June 27 (task-<id>) which self-resolved.
+- **Diagnostic evidence:** <other-ocas-skill>:deep (<other-ocas-skill> skill) ran OK at 14:12 while <other-ocas-skill>:light (same skill) failed at 14:00 — proves it's not a credential/config issue.
 - **jobs.json anomaly:** All failing jobs showed `last_run: null, next_run: null` in jobs.json while `hermes cron list` showed recent timestamps — error occurs before state persistence.
-- bower:scan hit HTTP 429 (separate transient rate limit) at 09:03.
+- <other-ocas-skill>:scan hit HTTP 429 (separate transient rate limit) at 09:03.
 - Resolution: MONITOR for auto-recovery. If persists 2+ hours, escalate to HIGH and check provider dashboard.
