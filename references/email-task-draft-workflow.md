@@ -86,7 +86,7 @@ Do NOT:
 
 The draft will be picked up by the next interactive `dispatch.draft` session that has valid Gmail auth.
 
-**Confirmed:** 2026-06-28 — task_001 <event> RSVP. Gmail token expired (May 2), `google_auth.py` refresh failed with "Could not determine client ID". Cached `all_facts.jsonl` contained thread ID, subject, sender. Drafted RSVP locally and saved to `drafts.jsonl`.
+**Confirmed:** 2026-06-28 — task-<id> <event> RSVP. Gmail token expired (May 2), `google_auth.py` refresh failed with "Could not determine client ID". Cached `all_facts.jsonl` contained thread ID, subject, sender. Drafted RSVP locally and saved to `drafts.jsonl`.
 
 ## What NOT to Do
 
@@ -132,7 +132,7 @@ Same as above — mark completed with draft_id and outcome.
 
 ## Confirmed Example (2026-06-26)
 
-**Task:** document proof for <contact-name> (task_004, high priority)
+**Task:** document proof for <contact-name> (task-<id>, high priority)
 - Source thread: <contact> said he didn't receive <contact>'s signed doc
 - <operator>'s last msg (Jun 25): "it was signed, but she signed it bigger, over the old signature."
 - Stall: No response from <contact> since Jun 25. Last msg was explanatory, not interrogative.
@@ -143,7 +143,7 @@ Same as above — mark completed with draft_id and outcome.
 
 ## Confirmed Example (2026-06-25)
 
-**Task:** <vendor> doc for <contact-name> (task_005, high priority)
+**Task:** <vendor> doc for <contact-name> (task-<id>, high priority)
 - Source thread: <contact> (vendor compliance) said <contact>'s signed doc wasn't received
 - Problem: <contact> signed over old signature (illegible)
 - Action: Drafted email to <contact> (<third-party-email>) asking her to re-sign cleanly and send to <contact> (contact@<third-party-domain>)
