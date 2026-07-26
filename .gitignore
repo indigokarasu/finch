@@ -13,3 +13,7 @@ config.json
 archive/
 .archive/
 assets/readme/hero.svg
+
+# local operator backups (never commit)
+*.bak
+*.bak.*

@@ -35,7 +35,30 @@ else:
     PROFILE_HOME = HERMES_HOME
 
 STATE_FILE = PROFILE_HOME / "commons" / "data" / "ocas-finch" / "memory_state.json"
-MEMORY_FILE = PROFILE_HOME / "MEMORY.md"
+
+
+def _resolve_memory_file() -> Path:
+    """Locate the real tier-1 MEMORY.md.
+
+    The canonical location is <profile>/memories/MEMORY.md. An earlier version
+    hardcoded <profile>/MEMORY.md, which does not exist on current layouts --
+    so tier-routing silently removed nothing while reporting success. Honour
+    FINCH_MEMORY_FILE for non-standard layouts, then prefer memories/, then
+    fall back to the legacy profile-root path.
+    """
+    override = os.getenv("FINCH_MEMORY_FILE")
+    if override:
+        return Path(override)
+    candidate = PROFILE_HOME / "memories" / "MEMORY.md"
+    if candidate.exists():
+        return candidate
+    legacy = PROFILE_HOME / "MEMORY.md"
+    if legacy.exists():
+        return legacy
+    return candidate  # canonical path; existence checked at use site
+
+
+MEMORY_FILE = _resolve_memory_file()
 
 # Ebbinghaus half-life schedule (in days)
 HALF_LIFE_SCHEDULE = [1, 3, 7, 14, 30]
@@ -177,15 +200,38 @@ def route_entry(text: str, to_tier: int, dest_path: str, dry_run: bool = False) 
                 result["error"] = "Verification failed: text not found in destination after write"
                 return result
 
-        # Step 3: Remove from MEMORY.md
-        if MEMORY_FILE.exists() and not dry_run:
+        # Step 3: Remove from MEMORY.md.
+        # A missing source file is a FAILURE, not a silent skip -- otherwise a
+        # route that copied the entry but never removed it reports OK and the
+        # entry lives in two tiers at once.
+        result["memory_file"] = str(MEMORY_FILE)
+        if not dry_run:
+            if not MEMORY_FILE.exists():
+                result["status"] = "FAILED"
+                result["error"] = (
+                    f"Source memory file not found: {MEMORY_FILE}. Nothing was "
+                    "removed. Set FINCH_MEMORY_FILE if your layout differs."
+                )
+                return result
             mem_content = MEMORY_FILE.read_text(encoding="utf-8")
-            new_lines = [ln for ln in mem_content.split("\n") if text.strip() not in ln]
-            new_content = "\n".join(new_lines)
-            backup = MEMORY_FILE.with_suffix(".md.bak.route")
-            shutil.copy2(MEMORY_FILE, backup)
-            MEMORY_FILE.write_text(new_content, encoding="utf-8")
-            result["removed_from_memory"] = True
+            if text.strip() not in mem_content:
+                result["removed_from_memory"] = False
+                result["note"] = (
+                    (result.get("note", "") + " ") if result.get("note") else ""
+                ) + "Entry not present in source; nothing to remove."
+            else:
+                new_lines = [ln for ln in mem_content.split("\n") if text.strip() not in ln]
+                new_content = "\n".join(new_lines)
+                backup = MEMORY_FILE.with_suffix(".md.bak.route")
+                shutil.copy2(MEMORY_FILE, backup)
+                MEMORY_FILE.write_text(new_content, encoding="utf-8")
+                # Verify the removal actually took effect before claiming success.
+                if text.strip() in MEMORY_FILE.read_text(encoding="utf-8"):
+                    shutil.copy2(backup, MEMORY_FILE)  # roll back
+                    result["status"] = "FAILED"
+                    result["error"] = "Removal verification failed; source restored from backup."
+                    return result
+                result["removed_from_memory"] = True
 
         # Step 4: Update state store
         if not dry_run:
