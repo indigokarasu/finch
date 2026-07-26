@@ -44,6 +44,13 @@ triggers:
 - memory guard
 ---
 
+> **PUBLIC REPO — GENERICISE EVERY REFERENCE.** This skill is published publicly.
+> Reference files are distilled from real runs, so never write a real name, email,
+> employer, thread id, task id, phone number, token or home path into one — use the
+> placeholders in `references/reference-file-workflow.md` ("Genericise Before You
+> Write"). Run `python3 scripts/check_no_pii.py` before committing; CI enforces it.
+
+
 # ocas-finch
 
 Finch is the OCAS System Evolution Layer's self-improvement orchestrator. It runs as a set of cron jobs — see **Manual run & verification** below for the actual deployed job set (the design doc's `finch:work` is not currently a separate deployed cron). Jobs are primarily pure-LLM cron prompts, plus one `no_agent` script floor (`finch:floor`). Deprecated scripts are in `archive/`.
