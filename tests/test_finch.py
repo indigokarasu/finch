@@ -151,6 +151,27 @@ class MemoryRouting(unittest.TestCase):
             self.assertFalse(dest.exists())
 
 
+    def test_empty_profile_does_not_double_the_path(self):
+        """Regression: an unset HERMES_PROFILE must not resolve to <home>/profiles.
+
+        Path(x) / "profiles" / "" collapses to x/profiles, which can exist as a
+        path-doubling artifact; joining it silently produced
+        <home>/profiles/memories/MEMORY.md instead of the correct path.  # pii-allow
+        """
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            (home / "memories").mkdir()
+            (home / "memories" / "MEMORY.md").write_text("- x\n", encoding="utf-8")
+            (home / "profiles").mkdir()  # the artifact that triggered it  # pii-allow
+            os.environ.pop("FINCH_MEMORY_FILE", None)
+            os.environ.pop("HERMES_PROFILE", None)
+            os.environ["HERMES_HOME"] = str(home)
+            import memory_state
+            m = importlib.reload(memory_state)
+            self.assertEqual(m.MEMORY_FILE, home / "memories" / "MEMORY.md")
+            self.assertNotIn("profiles", str(m.MEMORY_FILE))
+
+
 class ScriptsExposeHelp(unittest.TestCase):
     """Every script must answer --help without optional deps installed."""
 
