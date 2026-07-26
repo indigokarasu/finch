@@ -11,7 +11,7 @@ includes:
 - references/**
 - scripts/**
 metadata:
-  author: the agent Karasu (indigokarasu)
+  author: Indigo Karasu (indigokarasu)
   version: 2.15.3
   hermes:
     category: software-development
