@@ -14,7 +14,7 @@ Skills drift. Finch catches the drift: it scans session transcripts for correcti
 
 ```bash
 # Install as a Hermes skill
-hermes skill install ocas-finch
+hermes skills install ocas-finch
 ```
 
 ## What It Does
