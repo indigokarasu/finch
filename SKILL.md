@@ -12,7 +12,7 @@ includes:
 - scripts/**
 metadata:
   author: <profile> Karasu (indigokarasu)
-  version: 2.15.3
+  version: 3.0.0
   hermes:
     category: software-development
     tags:
