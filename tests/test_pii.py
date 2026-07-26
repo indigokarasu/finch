@@ -31,7 +31,9 @@ class PIIDetection(unittest.TestCase):
         self.assertIn("home_path", kinds)
 
     def test_catches_tokens(self):
-        kinds = [k for _, k, _, _ in self._hits("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")]  # pii-allow
+        # Built at runtime: a literal token-shaped string in a public repo trips
+        # GitHub secret scanning and our own gate, for a value that is fictional.
+        kinds = [k for _, k, _, _ in self._hits("ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8")]  # pii-allow
         self.assertIn("api_key", kinds)
 
     def test_placeholders_are_allowed(self):
