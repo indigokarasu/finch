@@ -39,11 +39,4 @@ hermes skill install ocas-finch
 
 Hermes Agent runtime. Reads session transcripts and MEMORY.md from the active profile.
 
-## Changelog
-
-### v2.15.3 — 2026-07-25
-
-- Generalized PII and system paths for public publish
-- Swapped SVG header for generated raster hero
-
 *Part of the [OCAS Agent Suite](https://github.com/indigokarasu).*
