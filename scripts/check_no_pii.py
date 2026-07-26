@@ -40,6 +40,10 @@ DENYLIST_FILE = REPO / ".pii-denylist"
 #: Put this on a line to exempt it (deliberate bad-examples, test fixtures).
 ALLOW_MARKER = "pii-allow"
 
+#: The author/org identity is meant to be published (LICENSE, repo URL);
+#: a denylist term inside one of these is not a leak.
+DENY_ALLOW = re.compile(r"Indigo Karasu|indigokarasu", re.IGNORECASE)
+
 # Domains/addresses that are documentation placeholders, not real people.
 ALLOWED_EMAIL = re.compile(
     r"@(example\.(com|org|net)|domain\.com|test\.invalid|localhost)$"
@@ -78,6 +82,14 @@ PATTERNS = [
     ("home_path",
      re.compile(r"/(?:home|Users)/(?!user\b|you\b|username\b|<)[A-Za-z0-9_-][A-Za-z0-9._-]*/"),
      "absolute home path exposing a username — use ~ or <fs-root>"),
+    # Host identity: this repo is public, so a concrete profile name or an
+    # absolute root path is a leak AND useless to anyone else's machine.
+    ("host_path",
+     re.compile(r"/root/(?!\s)"),  # pii-allow
+     "absolute host path — use ~/ or <fs-root>/"),
+    ("profile_name",
+     re.compile(r"profiles/(?!<)[a-z0-9_-]+/"),
+     "concrete profile name — use profiles/<profile>/"),
 ]
 
 
@@ -124,6 +136,10 @@ def scan_text(text: str, denylist: list[str]):
         low = line.lower()
         for term in denylist:
             if term.lower() in low:
+                # skip when the hit is only part of the author/org identity
+                stripped = DENY_ALLOW.sub("", line).lower()
+                if term.lower() not in stripped:
+                    continue
                 yield i, "denylist", term, "named entity from .pii-denylist"
 
 

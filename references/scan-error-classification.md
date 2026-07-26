@@ -35,7 +35,7 @@ When finch:scan reads cron health data, it must classify errored jobs into disti
    - **interpreter-shutdown**: LOW (was MEDIUM, corrected 2026-06-28) — **always transient**. Python `concurrent.futures` raises this when an executor schedules work during interpreter shutdown (process cleanup). The executor state resets between runs, so the next scheduled run succeeds without intervention. Confirmed: 3 jobs hit this on Jun 23 (single gateway restart), all recovered on next run. Create a monitoring task at most — never HIGH or MEDIUM. Only escalate to MEDIUM if 3+ CONSECUTIVE failures persist after the job has re-run at least once.
    - **missing-module**: MEDIUM — a Python package required by a cron script is not importable in the runtime environment. Not transient (won't self-resolve). **However**: always verify the module is actually missing before attempting a fix — check `python3 -c "import <module>"` in the venv. The scan may report a ModuleNotFoundError that was transient (package was installed between scan and work). Fix (if confirmed missing): `pip install <module>` in the venv that runs the cron. Confirmed 2026-06-28: `email:check` (25c06979ccc7) was reported as missing `googleapiclient`, but `python3 -c "from googleapiclient.errors import HttpError"` succeeded — the error was transient. Job had `last_status: ok`, `consecutive_failures: 0`.
    - **provider-error**: LOW — `RuntimeError: Provider returned error` indicates the LLM provider (e.g., OpenRouter) returned a transient error. These self-resolve on the next run. Only escalate to MEDIUM if the same job fails with this error for 3+ consecutive runs. Confirmed 2026-06-28: haiku:morning-scan, taste:scan, and 10khr-grind all hit this simultaneously — suggests a provider-side outage, not individual job issues.
-   - **provider-http400**: MEDIUM — HTTP 400 from LLM provider endpoints (NOT OAuth). Distinct from `provider-error` (RuntimeError) and `oauth-token-expired` (HTTP 400 on oauth2.googleapis.com). When 4+ jobs fail simultaneously with HTTP 400, it suggests a systemic provider credential or configuration issue (e.g., API key expired, account billing issue, provider rejecting request format). Escalate to HIGH if it persists across consecutive runs. Confirmed 2026-06-29: 4 jobs (<other-ocas-skill>:light, sands:conflict-scan, dispatcher, Koda Dispatcher) failed simultaneously with HTTP 400 — NOT OAuth-related, NOT RuntimeError.
+   - **provider-http400**: MEDIUM — HTTP 400 from LLM provider endpoints (NOT OAuth). Distinct from `provider-error` (RuntimeError) and `oauth-token-expired` (HTTP 400 on oauth2.googleapis.com). When 4+ jobs fail simultaneously with HTTP 400, it suggests a systemic provider credential or configuration issue (e.g., API key expired, account billing issue, provider rejecting request format). Escalate to HIGH if it persists across consecutive runs. Confirmed 2026-06-29: 4 jobs (<other-ocas-skill>:light, sands:conflict-scan, dispatcher, <other-profile> Dispatcher) failed simultaneously with HTTP 400 — NOT OAuth-related, NOT RuntimeError.
    - **investigate** (error=None with failures>0): LOW — transient or no-detail, monitor
    - **script-exit**: varies — check stdout for root cause
 
@@ -52,7 +52,7 @@ When finch:scan reads cron health data, it must classify errored jobs into disti
 | Category | Count | Severity | Affected Jobs | Root Cause |
 |----------|-------|----------|---------------|------------|
 | certifi CA bundle | 5 | HIGH | haiku:morning-scan, haiku:follow-maintenance, scout:research, <other-ocas-skill>:scan, scout:sources-refresh | `cacert.pem` missing from venv path |
-| missing-script / path-not-found | 6 | HIGH | monitor:email, monitor:koda-issues, monitor:list, monitor:styx, gens:sync, dispatch:triage-morning | Script file not found at configured path |
+| missing-script / path-not-found | 6 | HIGH | monitor:email, monitor:<other-profile>-issues, monitor:list, monitor:styx, gens:sync, dispatch:triage-morning | Script file not found at configured path |
 | delivery-error | 2 | HIGH | dispatch:briefing-deliver, (monitor:email also has delivery_err) | Job ran but output could not be delivered to destination |
 
 **Key observation:** The `monitor:email` job appears in BOTH missing-script AND delivery-error categories — it failed at the script stage AND had a delivery error recorded. When a job has both `last_status='error'` AND `last_delivery_error` set, the delivery error may be a secondary symptom (the script failed, so nothing was delivered). Always check `last_delivery_error` separately and note overlap.
@@ -151,7 +151,7 @@ When finch:scan reads cron health data, it must classify errored jobs into disti
 
 | Category | Count | Severity | Affected Jobs | Root Cause |
 |----------|-------|----------|---------------|------------|
-| provider-http400 | 4 | MEDIUM | <other-ocas-skill>:light, sands:conflict-scan, dispatcher, Koda Dispatcher | HTTP 400 from LLM provider — NOT OAuth, NOT RuntimeError. 4 jobs simultaneously = systemic credential/config issue. |
+| provider-http400 | 4 | MEDIUM | <other-ocas-skill>:light, sands:conflict-scan, dispatcher, <other-profile> Dispatcher | HTTP 400 from LLM provider — NOT OAuth, NOT RuntimeError. 4 jobs simultaneously = systemic credential/config issue. |
 | rate-limit | 1 | LOW | <other-ocas-skill>:scan | HTTP 429 — transient provider rate limit. |
 
 **Key observations — new error fingerprint (provider-http400):**
@@ -168,7 +168,7 @@ When finch:scan reads cron health data, it must classify errored jobs into disti
 
 ## jobs.json Structure (2026-06-28 update)
 
-The indigo profile file at `~/.hermes/profiles/<profile>/cron/jobs.json` has ~136 jobs with structure:
+The <profile> file at `~/.hermes/profiles/<profile>/cron/jobs.json` has ~136 jobs with structure:
 ```
 {"jobs": [<array of job objects>], "updated_at": "<timestamp>"}
 ```

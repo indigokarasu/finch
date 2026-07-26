@@ -6,7 +6,7 @@ WHY: finch:scan must NEVER hand-edit task-list.json with parallel `patch` calls
 (the parallel-patch / prefix-corruption trap breaks the file). All mutations
 (append new tasks + re-rank + validate) happen in ONE python3 process.
 
-USAGE (indigo cron profile - execute_code is BLOCKED, use terminal python3):
+USAGE (cron profile where execute_code is BLOCKED - use terminal python3):
   terminal python3 scripts/finch_scan_tasklist_rerank.py
   terminal python3 scripts/finch_scan_tasklist_rerank.py /path/to/task-list.json
   terminal python3 scripts/finch_scan_tasklist_rerank.py --merge new_tasks.json
