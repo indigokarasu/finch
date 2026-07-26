@@ -25,13 +25,27 @@ Exits 0 if at least one source returned data; non-zero on hard failure.
 import json, os, sys, argparse, base64
 from datetime import datetime, timezone, timedelta
 
-try:
-    from google.oauth2.credentials import Credentials
-    from google.auth.transport.requests import Request
-    import googleapiclient.discovery as disc
-except ImportError as e:
-    print(f"FATAL: missing libs (need google-api-python-client + google-auth): {e}", file=sys.stderr)
-    sys.exit(3)
+# Google libs are optional at import time so `--help` works without them
+# installed (CI runs in a clean env). Resolved on first real use instead.
+Credentials = None
+Request = None
+disc = None
+
+
+def _require_google():
+    """Import the Google client libs, or exit 3 with a clear message."""
+    global Credentials, Request, disc
+    if Credentials is not None:
+        return
+    try:
+        from google.oauth2.credentials import Credentials as _Credentials
+        from google.auth.transport.requests import Request as _Request
+        import googleapiclient.discovery as _disc
+    except ImportError as e:
+        print(f"FATAL: missing libs (need google-api-python-client + google-auth): {e}",
+              file=sys.stderr)
+        sys.exit(3)
+    Credentials, Request, disc = _Credentials, _Request, _disc
 
 CRED_DIR = os.path.expanduser("~/.google_workspace_mcp/credentials")
 SCOPES = [
@@ -130,13 +144,16 @@ def pull_drive(creds, n):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--acct", default="OPERATOR_EMAIL")
+    ap.add_argument("--acct", default=OPERATOR_EMAIL,
+                    help="mailbox to pull (env OCAS_OPERATOR_EMAIL)")
     ap.add_argument("--gmail-q", default="newer_than:2d")
     ap.add_argument("--gmail-n", type=int, default=20)
     ap.add_argument("--cal-hours", type=int, default=48)
     ap.add_argument("--drive-n", type=int, default=10)
     ap.add_argument("--full-text", action="store_true", help="Pull Gmail body text (slower; for actionable classification)")
     args = ap.parse_args()
+
+    _require_google()  # after --help, before any API use
 
     creds, d, path = load_creds(args.acct)
     creds = ensure_fresh(creds, d, path)
