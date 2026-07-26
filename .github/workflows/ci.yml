@@ -43,3 +43,6 @@ jobs:
             fi
           done
           exit $rc
+
+      - name: PII gate (no personal data may enter a public repo)
+        run: python scripts/check_no_pii.py

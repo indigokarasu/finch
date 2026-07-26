@@ -17,3 +17,6 @@ assets/readme/hero.svg
 # local operator backups (never commit)
 *.bak
 *.bak.*
+
+# local PII denylist — names/employers, must never publish
+.pii-denylist
