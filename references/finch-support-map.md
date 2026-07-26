@@ -39,6 +39,6 @@
 || `references/session-mining-state-db-recipe.md` | When `session_search` drowns interactive sessions in cron noise or fails — exact `state.db` SQL recipe (indigo profile store, read-only + busy_timeout), JSON `content` parse, context-compaction-header false-positive filter, and the MEMORY.md profile-path trap ||
 || `references/interactive-menu.md` | When invoked interactively via `/` command — two-level menu layout, Clarify timeout, response parsing, platform adaptation |
 || `scripts/memory_guard.py` | Deterministic safety floor for MEMORY.md — hard cap enforcement, directive protection, pointer stripping, atomic locked write. Run as final step of finch.compact or via finch:memory-guard-floor cron. ||
-|| `scripts/verify_sepagree_signature.py` | When finch:work picks EMAIL-SEPAGREE (<employer> Sep Agreement) — reusable Docusign "unsigned" re-verifier; run via `terminal` python3, prints VERDICT. |
+|| `scripts/verify_sepagree_signature.py` | When finch:work picks EMAIL-SEPAGREE (separation agreement) — reusable Docusign "unsigned" re-verifier; run via `terminal` python3, prints VERDICT. |
 || `references/concurrent-write-recovery.md` | When a write_file/read_file warns of a sibling-subagent concurrent modify, OR read_file/search_files throw `DaemonThreadPoolExecutor` — read-back + `stat` mtime check, `terminal` fallback. ||
 

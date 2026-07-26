@@ -129,7 +129,7 @@ count, negotiation cross-check) and a one-line VERDICT. Read-only; never sends m
 `python3 -c "import google.oauth2"` and pick an interpreter that has it. Interpreter
 path is environment-specific — a probe, not a hardcoded rule.)
 
-To prove a Docusign envelope is UNSIGNED (e.g. <employer> Separation Agreement)
+To prove a Docusign envelope is UNSIGNED (e.g. separation agreement)
 WITHOUT opening the envelope link, the script runs:
 
 1. **Count completion notices** in the window: `from:docusign.net (subject:"Completed") newer_than:14d`
