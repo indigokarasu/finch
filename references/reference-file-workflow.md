@@ -100,3 +100,44 @@ one above and for test fixtures. Use it sparingly — it shows up in review.
 If the scanner flags something that is genuinely a placeholder, widen the
 allowlist in `check_no_pii.py` rather than deleting the finding — a suppression
 that lives in the scanner is reviewable; one that lives in your head is not.
+
+---
+
+## ROUTING: does this reference belong to finch at all?
+
+Finch's job is to **route** findings to the tier and the skill that owns them.
+It is not a filing cabinet. Historically it became one: 57 reference files
+accumulated in this directory, 32 of which documented *other* systems (Gmail,
+MCP, cron, the `patch` tool, OAuth, git, disk, state.db). Those were finch's
+**output**, not finch's content — and because they lived inside a published
+skill, every operational detail in them was published too. That is exactly how
+the 2026-07-26 PII incident happened.
+
+**Before writing a reference here, ask one question:**
+
+> Does this document how **finch** behaves, or how **something else** behaves?
+
+| The finding is about… | Where it goes |
+|---|---|
+| finch's own principles, architecture, algorithms, scan/work procedure | `references/` **here** — it ships with the skill |
+| another skill's behaviour | that skill's own `SKILL.md` / its reference set |
+| a tool, API, or platform quirk (cron, MCP, Gmail, `patch`, OAuth, git) | `<fs-root>/references/` — **local, never published** |
+| a one-off incident with no reusable pattern | the task/journal record, not a reference at all |
+| a memory-level fact about the operator | MEMORY.md (or its routed tier) |
+
+**Default to "not here."** A reference in this directory ships to a public
+repo and must be useful to a stranger running finch on their own machine. If
+it is only meaningful on this host, it belongs in `<fs-root>/references/`.
+
+`<fs-root>/references/` is the local, unpublished library. Create it if absent
+(`mkdir -p ~/references`) and keep `INDEX.md` there current. Nothing in it is
+tracked by this repo.
+
+### Why this matters more than the PII scanner
+
+`scripts/check_no_pii.py` catches *structural* leaks — addresses, thread ids,
+tokens. It cannot catch a sentence like "the January invoice from the vendor
+was double-charged": no email, no id, nothing to match, but still a private
+detail about the operator. Routing is the real protection; the scanner is the
+backstop. Keep host-specific findings out of this directory and the scanner
+rarely has to fire.
