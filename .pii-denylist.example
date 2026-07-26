@@ -1,0 +1,10 @@
+# .pii-denylist — LOCAL ONLY, never committed (.gitignore excludes it).
+#
+# Names, employers, clients and project code names that structural patterns
+# cannot detect. One term per line, case-insensitive substring match.
+# Copy to `.pii-denylist` and fill in with YOUR sensitive terms.
+#
+# Example:
+# Acme Corporation
+# Jane Doe
+# project-bluebird
