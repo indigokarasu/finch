@@ -22,7 +22,7 @@ class PIIDetection(unittest.TestCase):
         self.assertIn("email", kinds)
 
     def test_catches_thread_id(self):
-        kinds = [k for _, k, _, _ in self._hits("thread <thread-id>")]  # pii-allow
+        kinds = [k for _, k, _, _ in self._hits("thread 0f1e2d3c4b5a6978")]  # pii-allow
         self.assertIn("thread_id", kinds)
 
     def test_catches_phone_and_home_path(self):
