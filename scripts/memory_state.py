@@ -28,8 +28,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 HERMES_HOME = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes")))
-_HERMES_PROFILE = os.getenv("HERMES_PROFILE", "indigo")
-if HERMES_HOME.name != "profiles" and (HERMES_HOME / "profiles" / _HERMES_PROFILE).is_dir():
+# No baked-in profile: an unset HERMES_PROFILE must not resolve to whichever
+# profile the author happened to use. Empty -> fall back to HERMES_HOME.
+_HERMES_PROFILE = os.getenv("HERMES_PROFILE", "")
+# An EMPTY profile must not be joined: Path(x)/"profiles"/"" collapses to
+# x/profiles, which can exist as a path-doubling artifact and would then be
+# mistaken for the profile home.
+if _HERMES_PROFILE and HERMES_HOME.name != "profiles" and (HERMES_HOME / "profiles" / _HERMES_PROFILE).is_dir():
     PROFILE_HOME = HERMES_HOME / "profiles" / _HERMES_PROFILE
 else:
     PROFILE_HOME = HERMES_HOME

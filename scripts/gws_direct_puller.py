@@ -16,7 +16,7 @@ x-goog-api-client header. Raw requests 404; googleapiclient succeeds. Gmail is
 reachable either way, but use googleapiclient uniformly.
 
 Run with the MCP venv python (it has google-api-python-client + google-auth):
-  <hermes-install>/.venv/bin/python scripts/gws_direct_puller.py [--acct ...] \
+  <venv>/bin/python scripts/gws_direct_puller.py [--acct ...] \
       [--gmail-q "newer_than:2d"] [--cal-hours 48] [--drive-n 10]
 
 Prints a JSON object to stdout: {"gmail":[...], "calendar":[...], "drive":[...]}.

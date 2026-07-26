@@ -209,7 +209,7 @@ When a task requires <operator> to contact someone NOT already in the existing t
 4. Save as draft via `draft_gmail_message` — **never send directly from cron**
 5. Mark task `completed` with draft ID and a note for <operator> to review/send
 
-This pattern applies when the task's `action` field implies coordinating with a third party who is not the original sender. The work job does NOT need to load `ocas-dispatch` for this — `draft_gmail_message` is sufficient. See `references/pitfalls.md` for the confirmed 2026-06-25 example (Bywater COC — <contact-name>).
+This pattern applies when the task's `action` field implies coordinating with a third party who is not the original sender. The work job does NOT need to load `ocas-dispatch` for this — `draft_gmail_message` is sufficient. See `references/pitfalls.md` for the confirmed 2026-06-25 example (<vendor> COC — <contact-name>).
 
 ## Task List Schema
 

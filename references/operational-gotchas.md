@@ -58,7 +58,7 @@ When writing Python scripts that reference MEMORY.md or commons directories, nev
 
 ```python
 HERMES_HOME = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes")))
-_HERMES_PROFILE = os.getenv("HERMES_PROFILE", "indigo")
+_HERMES_PROFILE = os.getenv("HERMES_PROFILE", "<profile>")
 # Handle three cases: (1) HERMES_HOME already IS the profile dir, (2) standard layout with profiles/ subdir, (3) fallback
 if HERMES_HOME.name == _HERMES_PROFILE and (HERMES_HOME / "MEMORY.md").exists():
     PROFILE_HOME = HERMES_HOME
@@ -69,7 +69,7 @@ else:
 MEMORY_FILE = PROFILE_HOME / "MEMORY.md"
 ```
 
-**Gotcha**: The old two-branch logic (`name != "profiles"`) fails when `HERMES_HOME` is already the profile directory (name is e.g. `"indigo"`, not `"profiles"`), causing double-nesting to `profiles/indigo/profiles/indigo/MEMORY.md`. Fixed in `scripts/memory_guard.py` as of 2026-06-21 — the script now uses three-branch logic: (1) detect if HERMES_HOME already IS the profile dir by checking `name == _HERMES_PROFILE && MEMORY.md.exists()`, (2) standard `profiles/` subdir layout, (3) fallback to HERMES_HOME directly.
+**Gotcha**: The old two-branch logic (`name != "profiles"`) fails when `HERMES_HOME` is already the profile directory (name is e.g. `"<profile>"`, not `"profiles"`), causing double-nesting to `profiles/<profile>/profiles/<profile>/MEMORY.md`. Fixed in `scripts/memory_guard.py` as of 2026-06-21 — the script now uses three-branch logic: (1) detect if HERMES_HOME already IS the profile dir by checking `name == _HERMES_PROFILE && MEMORY.md.exists()`, (2) standard `profiles/` subdir layout, (3) fallback to HERMES_HOME directly.
 
 ### Two evals.json files must be kept in sync
 There are two `evals.json` files: `evals.json` (root) and `evals/evals.json` (subdirectory). Both must be updated when adding/removing test cases. The root one is the canonical reference.
