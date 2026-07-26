@@ -6,7 +6,7 @@ When creating reference files (cross-session canonical patterns, guides, referen
 
 ### Storage
 - **Originals**: `<fs-root>/references/` — this is the single source of truth
-- **Backup**: `<fs-root>/indigo-repo/identity/references/` — copy only, never the original
+- **Backup**: `<fs-root>/<profile>-repo/identity/references/` — copy only, never the original
 - **NEVER** put originals in skill directories (`~/.hermes/skills/*/references/`)
 - **NEVER** put originals in the backup directory
 
@@ -18,7 +18,7 @@ When creating reference files (cross-session canonical patterns, guides, referen
 ### Workflow
 1. Create the file in `<fs-root>/references/`
 2. Add an entry to `<fs-root>/references/INDEX.md`
-3. Copy to `<fs-root>/indigo-repo/identity/references/` for backup
+3. Copy to `<fs-root>/<profile>-repo/identity/references/` for backup
 4. Add a one-liner pointer in MEMORY.md if the finding is also a memory-level fact
 
 ### Naming
@@ -26,9 +26,9 @@ When creating reference files (cross-session canonical patterns, guides, referen
 - Descriptive, hyphenated, lowercase
 
 ### "Identity" Means Root
-- "Identity" in MEMORY.md context refers to `/root` (the agent's root directory)
+- "Identity" in MEMORY.md context refers to `~` (the agent's root directory)
 - NOT a literal directory called "identity"
-- The indigo-repo/identity/ path is a *backup* of root-level artifacts, not the original location
+- The <profile>-repo/identity/ path is a *backup* of root-level artifacts, not the original location
 
 ---
 
