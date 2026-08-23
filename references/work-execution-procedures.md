@@ -144,13 +144,13 @@ A task description that names a script (e.g. "fix praxis_review.py") is a hint, 
 
 Procedure:
 1. **Find the job's real script path from `jobs.json`** — read the job entry (`id`, `name`) and inspect its `last_error` traceback. The traceback's `File ".../scripts/praxis_review.py", line N` is the authoritative target. The `data/scripts/` path or the `prompt`'s `python3 <path>` line can be STALE or point at a nonexistent path.
-2. **Grep for all copies** (e.g. `search_files` `praxis_review.py` under `/root`) — confirm the broken copy is the cron target, and that other copies (e.g. `indigokarasu-*/scripts/`, `gentube-output/` clones) are NOT the ones invoked.
+2. **Grep for all copies** (e.g. `search_files` for `praxis_review.py` under the agent home) — confirm the broken copy is the cron target, and that other copies (e.g. `indigokarasu-*/scripts/`, `gentube-output/` clones) are NOT the ones invoked.
 3. **Read the actual target's offending lines** before editing — the description may describe the bug inaccurately (e.g. it may claim line 38, or attribute the tilde to the wrong constant). Trust the live traceback over the task prose.
-4. **Patch only the confirmed target**, then verify the constant resolves (see below). Do not "fix" the sibling copies unless they share the identical defect — in the 07-26 case, the two repo copies already used full `~/.hermes/...` paths and were fine; only the `skills/` copy had the literal `~`.
+4. **Patch only the confirmed target**, then verify the constant resolves (see below). Do not "fix" the sibling copies unless they share the identical defect — in the 07-26 case, the two repo copies already used absolute `<fs-root>/.hermes/...` paths and were fine; only the `skills/` copy had the literal `~`.
 
 **Verification (cron-safe):** `execute_code` is BLOCKED under `<profile>` cron (arbitrary-subprocess guard) — use `terminal python3 -c "..."` instead. Resolve the constant and assert: path exists, dir is writable, no literal `~` remains. Do NOT run `main()` to "test" — it appends a real decision row; verification of the constant's resolution is sufficient evidence of the fix.
 
-**Confirmed 2026-07-26 finch:work (`cron-praxis-review-filenotfound`):** The task prescribed "expanduser() DATA_DIR in praxis_review.py." Three copies existed; the cron traceback pinned the live target to `~/.hermes/profiles/indigo/skills/ocas-praxis/scripts/praxis_review.py` (literal `~` at lines 17-18). The two `indigokarasu-*` repo copies already used full paths. Patching the skill copy with `os.path.expanduser()` and verifying via `terminal python3` resolved the FileNotFoundError; next run expected ok.
+**Confirmed 2026-07-26 finch:work (`cron-praxis-review-filenotfound`):** The task prescribed "expanduser() DATA_DIR in praxis_review.py." Three copies existed; the cron traceback pinned the live target to `<fs-root>/.hermes/profiles/<profile>/skills/ocas-praxis/scripts/praxis_review.py` (literal `~` at lines 17-18). The two `indigokarasu-*` repo copies already used full paths. Patching the skill copy with `os.path.expanduser()` and verifying via `terminal python3` resolved the FileNotFoundError; next run expected ok.
 
 #### All-transient resolution (no fix needed)
 
