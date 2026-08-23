@@ -67,6 +67,16 @@ When running as a cron job with no user present, **filter for autonomous actiona
 
 **When all pending tasks fail the actionability filter:** Pick the highest-priority task that CAN be executed (even if low-priority), execute it as a monitoring/validation check, and mark it done with a resolution note. Report that higher-priority tasks are blocked pending user input. This is preferable to returning "no tasks" — at minimum, validate system health signals.
 
+#### Equal-priority tie-break: prefer autonomously-fixable over user-blocked (confirmed 2026-07-26 finch:work)
+
+When several pending tasks share the SAME priority but differ in actionability, the highest-priority rule alone is ambiguous. Break the tie by autonomous-actionability, not by list order:
+
+1. Among same-priority tasks, **prefer one that is autonomously fixable** (a code defect, a path fix, a config correction) over one that is blocked on user action (interactive OAuth, email accept/decline decisions, business commitments). Fix the fixable one this run.
+2. **Do NOT mark the user-blocked tasks `done`** and do not silently skip them. Leave them `pending` (or `watching` with a `blocked_reason`) and report them explicitly as blocked pending user input. A `done` status triggers re-open churn; a silent skip hides a real outstanding action from the operator.
+3. Report the split clearly: "Executed <fixable task>. Skipped <N> P2 tasks blocked on user action (OAuth, email decisions) — require the operator."
+
+**Confirmed 2026-07-26 finch:work (`cron-praxis-review-filenotfound`):** Task list had FOUR P2 tasks. Three were blocked on user action (Spotify OAuth, Collective2 upgrade decision, GLG/email responses) and ONE was an autonomously-fixable code defect (`praxis:review` FileNotFoundError from a literal `~` in a path). Correct move: execute the code fix now; leave the three user-action tasks pending and name them in the report. Returning "no tasks" would have been wrong — a fixable defect was in scope.
+
 **When a task becomes actionable later** (e.g., <contact-name> replies, <operator> provides input), finch:scan will create a new task or re-activate the existing one. The blocked status is not permanent — it's a reflection of current actionability, not importance.
 
 #### Cascading dependency awareness (confirmed 2026-06-29)
@@ -127,6 +137,20 @@ When finch:scan flags a cron `last_status=error` with a Python traceback message
 2. Reproduce against the CURRENT working-tree code with a traceback harness (import `main()`, call inside `try/except: traceback.print_exc()`). OCAS scripts catch `Exception` at the top level and print only `FAIL: ...: <msg>` with NO line number, so `jobs.json` stderr alone won't name the broken line — the harness will.
 3. If verified, COMMIT the fix (the fix file only; leave unrelated working-tree modifications uncommitted — they belong to other tasks). An uncommitted patch is fragile under cron: these repos carry many local commits ahead of upstream and get rebased/pulled, which discards or conflicts uncommitted changes, so the next scheduled tick would crash again. Committing makes it durable.
 4. Clean verification side-effects: running `main()` appends a row to any append-only log it writes — dedupe to one deterministic row per key (e.g. per date; for mixed-type logs key on `(decision_type, date)`) so the data stays honest.
+
+#### Verify the ACTUAL cron target path before patching (confirmed 2026-07-26 finch:work)
+
+A task description that names a script (e.g. "fix praxis_review.py") is a hint, NOT an authoritative pointer. Multiple copies of the same script can exist across repos, and only ONE is the live cron target. Patching the wrong copy wastes a cycle and leaves the real defect live.
+
+Procedure:
+1. **Find the job's real script path from `jobs.json`** — read the job entry (`id`, `name`) and inspect its `last_error` traceback. The traceback's `File ".../scripts/praxis_review.py", line N` is the authoritative target. The `data/scripts/` path or the `prompt`'s `python3 <path>` line can be STALE or point at a nonexistent path.
+2. **Grep for all copies** (e.g. `search_files` `praxis_review.py` under `/root`) — confirm the broken copy is the cron target, and that other copies (e.g. `indigokarasu-*/scripts/`, `gentube-output/` clones) are NOT the ones invoked.
+3. **Read the actual target's offending lines** before editing — the description may describe the bug inaccurately (e.g. it may claim line 38, or attribute the tilde to the wrong constant). Trust the live traceback over the task prose.
+4. **Patch only the confirmed target**, then verify the constant resolves (see below). Do not "fix" the sibling copies unless they share the identical defect — in the 07-26 case, the two repo copies already used full `~/.hermes/...` paths and were fine; only the `skills/` copy had the literal `~`.
+
+**Verification (cron-safe):** `execute_code` is BLOCKED under `<profile>` cron (arbitrary-subprocess guard) — use `terminal python3 -c "..."` instead. Resolve the constant and assert: path exists, dir is writable, no literal `~` remains. Do NOT run `main()` to "test" — it appends a real decision row; verification of the constant's resolution is sufficient evidence of the fix.
+
+**Confirmed 2026-07-26 finch:work (`cron-praxis-review-filenotfound`):** The task prescribed "expanduser() DATA_DIR in praxis_review.py." Three copies existed; the cron traceback pinned the live target to `~/.hermes/profiles/indigo/skills/ocas-praxis/scripts/praxis_review.py` (literal `~` at lines 17-18). The two `indigokarasu-*` repo copies already used full paths. Patching the skill copy with `os.path.expanduser()` and verifying via `terminal python3` resolved the FileNotFoundError; next run expected ok.
 
 #### All-transient resolution (no fix needed)
 

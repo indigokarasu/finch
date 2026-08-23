@@ -95,15 +95,16 @@ See `references/storage-layout.md` for the full directory tree and skill package
 The full operational detail for each item below lives in `references/scanning-gotchas.md` (one-line pointers, full bodies there):
 
 - Verify tool availability before parallel batches (one bad tool name poisons the whole batch). **DEFERRED-MCP DIRECT CALL = WHOLE-BATCH KILL (confirmed → full body in `references/scanning-gotchas.md`
-- **Absent-namespace closure — `tool_call` ALSO fails, pivot immediately (re-validated 2026-07-23T19:48Z finch:scan)** → full body in `references/scanning-gotchas.md`
+- **`tool_call()` for MCP tools fails with "not a deferrable tool" in cron** — MCP tools registered in the agent's tool list (e.g. `mcp_google_workspace_search_gmail_messages`, `mcp_google_workspace_get_events`, `mcp_google_workspace_list_drive_items`) cannot be invoked via `tool_call()` in cron context. Fallback: use `googleapiclient` directly (see `gws_direct_puller.py` in the skill's scripts/) or Composio's `COMPOSIO_MULTI_EXECUTE_TOOL`. Email: check toolkit connection status first; if absent, use cached-data fallback (`last_email_check_<account>.json` in `commons/data/ocas-dispatch/`). Calendar/Drive: attempt Composio first, skip only on connection failure. Do NOT retry `tool_call()` for the same MCP tool in the same run — it will fail identically. (Confirmed 2026-07-27 finch:scan)
 - **MCP-absent triage (distinguish mount-failure from config/cred failure)** → full body in `references/scanning-gotchas.md`
 - **googleapiclient direct-fallback RESPONSE SHAPE (confirmed 2026-07-23 finch:scan)** → full body in `references/scanning-gotchas.md`
 - Unreachable workspace source = GAP, never "no signal". When the google-workspace MCP namespace is entirely absent from the tool list (not just failing → full body in `references/scanning-gotchas.md`
-- MCP tools reachable in cron via Composio (`COMPOSIO_MULTI_EXECUTE_TOOL`); attempt Calendar/Drive first, skip only on connection failure
+- **Google Workspace MCP tools reachable in cron via Composio (`COMPOSIO_MULTI_EXECUTE_TOOL`); attempt Calendar/Drive first, skip only on connection failure**
+- **MCP Google Workspace tools are NOT callable via `tool_call()` in cron** — they return "not a deferrable tool". Fallback to `gws_direct_puller.py` (googleapiclient) or cached dispatch journals. See `scan-work-architecture.md` § MCP-unavailable fallback pattern. (Confirmed 2026-07-27)
 - `tool_search` ≠ `tool_call` availability — probe a suspect MCP tool alone before batching; MCP load state is intermittent between runs
 - **Google Workspace MCP = proxy invocation, not direct** → full body in `references/scanning-gotchas.md`
-- **Large MCP batch responses persist to disk — parse with `terminal`, not inline** → full body in `references/scanning-gotchas.md`
-- **`get_gmail_messages_content_batch` 429 partial-failure (2026-07-22)** → full body in `references/scanning-gotchas.md`
+- **Large MCP batch responses persist to disk — parse with `terminal`, not inline** → full body in `references/scanning-gotchas.md` (CONFIRMED parse recipe: `json.loads(raw)['result']` + split on `Message ID:` — see `references/email-mcp-pagination-parsing.md`)
+- `get_gmail_messages_content_batch` 429 partial-failure (2026-07-22) → full body in `references/scanning-gotchas.md`
 - Direct MCP credential-store fallback (`<gworkspace-creds>/credentials/<email>.json`) when dispatch rejects + legacy token is `deleted_client`
 - **Host egress filter 404s RAW requests to Calendar/Drive — use googleapiclient (confirmed 2026-07-22 finch:scan)** → full body in `references/scanning-gotchas.md`
 - Stale errors from `hermes cron list` — verify `Last run:` timestamp; `consecutive_failures` is the only reliable error gate
@@ -120,6 +121,11 @@ The full operational detail for each item below lives in `references/scanning-go
 - `read_file` view of a JSON file is NOT validation → full body in `references/scanning-gotchas.md`
 - **Parallel `patch` edits to the same JSON file corrupt it** → full body in `references/scanning-gotchas.md`
 - **Re-rank the task array with a script, not `patch` block-moves** → full body in `references/scanning-gotchas.md`
+- **Cron-error "completed" may be a FALSE RECOVERY — re-run the script live, never trust prior status; verify both live jobs.json + live script exit 0** → full body in `references/finch-scan-pitfalls.md`
+- **`expanduser("...{PROFILE}...")` missing f-string = literal `{PROFILE}` path bug (FileNotFoundError)** → full body in `references/finch-scan-pitfalls.md`
+- **task-list.json mutation: append NEW tasks to the LIVE list, not a parallel dict (lost at serialize)** → full body in `references/finch-scan-pitfalls.md`
+- **`expanduser("~")` returns literal tilde path in cron subprocesses when `HOME` is unset** → full body in `references/finch-scan-pitfalls.md` (pitfall #5). This is a different root cause from the `{PROFILE}` bug (pitfall #2) but produces the same symptom. Both affect scripts using `os.path.expanduser("~")` in cron context. Fix: hardcode absolute paths or read `os.environ.get("HOME", "/root")`.
+- **Google Workspace MCP content-batch REQUIRES `user_google_email` (else pydantic validation error)** → full body in `references/finch-scan-pitfalls.md`
 - **Cron health = read `jobs.json` directly** → full body in `references/scanning-gotchas.md`
 - **`jobs.json` is a dict `{"jobs": [...], "updated_at"}`, NOT a bare list (confirmed 2026-07-23 finch:scan)** → full body in `references/scanning-gotchas.md`
 - **Cron run-history evidence = `cron/output/<rid>/`, NOT `executions.db`** → full body in `references/scanning-gotchas.md`
@@ -132,6 +138,7 @@ The full operational detail for each item below lives in `references/scanning-go
 - **`patch` PREFIX match = SILENT corruption on long single-line JSON values** → full body in `references/scanning-gotchas.md`
 - `jobs.json` for cron health when `cronjob` tool unavailable; `hermes cron list` hides disabled jobs. **NEVER report "cron health clean" without enumer → full body in `references/scanning-gotchas.md`
 - **Cron-health "0 errors" is a HIGH-RISK false-negative — derive the claim from a FULL-OUTPUT grep, never from a prior scan's state** → full body in `references/scanning-gotchas.md`
+- **`tool_call()` for MCP tools fails with "not a deferrable tool" in cron** — MCP tools (e.g. `mcp_google_workspace_search_gmail_messages`, `mcp_google_workspace_get_events`, `mcp_google_workspace_list_drive_items`) cannot be invoked via `tool_call()` in cron context. The registered tool list includes the names but the runtime does not expose them for `tool_call` dispatch in this profile. Fallback: use `gws_direct_puller.py` (googleapiclient direct, via `<hermes-venv>/bin/python`) or Composio's `COMPOSIO_MULTI_EXECUTE_TOOL`. Email: check toolkit connection status first; if absent, use cached-data fallback (`last_email_check_<account>.json` in `commons/data/ocas-dispatch/`). Calendar/Drive: attempt Composio first, skip only on connection failure. Do NOT retry `tool_call()` for the same MCP tool in the same run — it will fail identically. (Confirmed 2026-07-27 finch:scan)
 - **False-recovery claim = false-positive, verify against live jobs.json (confirmed 2026-07-24 finch:work)** → full body in `references/scanning-gotchas.md`
 - **Gateway-restart timing interprets a single interpreter-shutdown error (confirmed 2026-07-24 finch:work)** → full body in `references/scanning-gotchas.md`
 - Provider HTTP 400 is MEDIUM (not transient) — classify by status; missing-script errors need path verification not debugging
@@ -139,6 +146,8 @@ The full operational detail for each item below lives in `references/scanning-go
 - Gateway RSS growth tracking (3x = notable, >2GB = escalate)
 - **`hermes cron list` has NO parseable JSON mode — and emits NO `last_status`/`consecutive_failures` columns** → full body in `references/scanning-gotchas.md`
 - **write_file / read_file commons paths: use LITERAL `~/.hermes/commons/...`, NEVER a tilde `~/.hermes/commons/...`** → full body in `references/scanning-gotchas.md`
+- **write_file / read_file commons paths: use LITERAL `~/.hermes/commons/...`, NEVER a tilde `~/.hermes/commons/...`** → full body in `references/scanning-gotchas.md`
+- **`expanduser("~")` returns literal tilde path in cron subprocesses when `HOME` is unset** → full body in `references/finch-scan-pitfalls.md` (pitfall #5). This is a DIFFERENT root cause from the `{PROFILE}` missing-f-string bug (pitfall #2) but produces the same `FileNotFoundError` symptom. Both affect any script using `os.path.expanduser("~")` in cron context. Fix: use hardcoded absolute paths or read `os.environ.get("HOME", "/root")` explicitly.
 
 ## Architecture
 
@@ -173,7 +182,7 @@ When the user says "Always" or "Never", this is an explicit behavioral rule. **P
 
 Finch operates as a continuous improvement cycle:
 
-1. **Scan** (`finch:scan`, every 2h) — Read 7 signal sources (cron health, email, calendar, sessions, Drive, kanban, system). Validate existing tasks. Maintain prioritized task list at `task-list.json`.
+1. **Scan** (`finch:scan`, every 2h) — Read 7 signal sources. **Cron health MUST be enumerated from the LIVE `jobs.json` (`~/.hermes/profiles/<profile>/cron/jobs.json`) via the parse script in `references/cron-health-validation.md` — NEVER via `cronjob(action='list')` or `hermes cron list`, which surface only a subset and miss paused/disabled error jobs.** Validate existing tasks against live signal (bidirectionally — re-open on relapse). Maintain prioritized task list at `task-list.json`.
 2. **Work** (`finch:work`, every 30 min) — Pick top pending task. Load governing skill via `skill_view`. Execute ONE task per run. Before selecting, check for duplicate task IDs and clean up if found (see `references/duplicate-task-detection.md`). When completing a task:
    - Update the task's description to include a work log with timestamp and summary of actions taken (e.g., `\n\n[Work log: At <timestamp> checked DNS for art.<agent-handle>.com - no records found (NXDOMAIN).]`)
    - Set the task's status to `"done"`
@@ -230,8 +239,11 @@ Format: `[CORRECTION] What: <what was wrong>. Why: <underlying principle>. When:
 This produces lessons that transfer across contexts, not just single-instance fixes.
 
 ### Signal triage before execution (WORK step)
-
+### Signal triage before execution (WORK step)
 Classify a signal as real / stale / transient before changing anything. Read `references/work-execution-procedures.md` (Signal triage before execution (WORK step)) before acting on any finch:work signal.
+
+### Prescribed-fix may be wrong — verify before applying (WORK step)
+When a task-list entry prescribes a specific "fix" (seed the missing file, relink the path, create X), do NOT apply it on sight. Two conditions invalidate the prescribed fix: (1) the job already **self-recovered** via an upstream reseed — the error is from an OLD run; a later run already succeeded and rewrote the artifact (read `cron/output/<job-id>/`, compare file mtime to the success run). (2) the crash is a **deliberate fail-loud guard** over a later full-file rewrite — silencing it (e.g. `except FileNotFoundError: others=[]`) lets a future wipe proceed and **destroy every sibling record** in that file. In either case, take no code action; resolve the task as self-recovered and cite the evidence. Full procedure + real case in `references/work-prescribed-fix-selfrecovery-guard.md`.
 
 ## Manual run & verification (when the user says "run finch")
 
@@ -239,7 +251,7 @@ Classify a signal as real / stale / transient before changing anything. Read `re
 
 - **`finch`** — profile-root MEMORY.md compaction (runs `memory_guard.py` on the DEFAULT profile's MEMORY.md — NOT the <profile> profile's; guard the `--file` override or it compacts the wrong memory).
 - **`finch:floor`** — `no_agent` script safety floor (memory guard). Normally `enabled: false` but self-triggers; do NOT treat its disabled state as broken.
-- **`finch:scan`** — every 2h, pure LLM.
+- **`finch:scan`** — every 2h, pure LLM. Cron-health step MUST enumerate `jobs.json` via `references/cron-health-validation.md` (NOT `cronjob(action='list')` / `hermes cron list`).
 - **`ocas-finch:daily`** — daily 6am PT, pure LLM.
 - **`ocas-finch:weekly`** — Sunday 8am PT, pure LLM.
 
