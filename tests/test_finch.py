@@ -12,6 +12,7 @@ Locks the two data-loss / silent-failure bugs found in the v2.15.3 review:
 Run:  python3 -m unittest discover -s tests -v
 """
 import importlib
+import json
 import os
 import subprocess
 import sys
@@ -222,12 +223,33 @@ class FinchHooksPluginTests(unittest.TestCase):
         finch_hooks_plugin.register(ctx)
         self.assertIn("pre_tool_call", ctx.hooks)
         self.assertIn("post_llm_call", ctx.hooks)
+        self.assertIn("subagent_start", ctx.hooks)
         self.assertIn("subagent_stop", ctx.hooks)
+        self.assertIn("on_session_reset", ctx.hooks)
         self.assertIn("finch.memory-rules", ctx.sections)
 
         section = ctx.sections["finch.memory-rules"]
         rendered = section["content_fn"]({})
         self.assertIn("Finch Memory & Learning Rules", rendered)
+
+    def test_subagent_failure_buffering_with_file_lock(self):
+        import finch_hooks_plugin
+        with tempfile.TemporaryDirectory() as td:
+            os.environ["HERMES_HOME"] = td
+            finch_hooks_plugin.on_subagent_stop(
+                parent_session_id="parent_123",
+                child_role="worker",
+                child_summary="Task failed due to timeout",
+                child_status="failed",
+                duration_ms=1500,
+            )
+            failure_file = Path(td) / "commons" / "data" / "ocas-finch" / "subagent_failures.jsonl"
+            self.assertTrue(failure_file.exists())
+            lines = failure_file.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(lines), 1)
+            data = json.loads(lines[0])
+            self.assertEqual(data["parent_session_id"], "parent_123")
+            self.assertEqual(data["child_status"], "failed")
 
 
 class ScriptsExposeHelp(unittest.TestCase):

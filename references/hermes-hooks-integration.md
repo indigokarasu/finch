@@ -19,7 +19,7 @@ Hermes provides four hook lifecycle integration surfaces:
 
 ## 1. Real-Time Signal Mining vs. Offline Batch Mining
 
-### The Problem
+### The Problem: Offline Batch Mining Latency
 Historically, Finch relied solely on scheduled cron jobs (`finch:scan` every 2 hours, `ocas-finch:daily` at 6 AM) to mine session JSONL files for user corrections, directives, and breakthroughs. This meant learning signals were lagging behind real-time interaction by hours.
 
 ### Optimization Pattern: Passive Real-Time Observers
@@ -41,7 +41,7 @@ def on_turn_complete(session_id: str, user_message: str, assistant_response: str
 
 ## 2. Memory Guard & Tool Interception
 
-### The Problem
+### The Problem: Manual Memory Tool Surgery & Bloat
 In Hermes profiles where Finch is active, manual edits to `MEMORY.md` via the built-in `memory` tool are restricted or blocked to prevent manual memory surgery, bloat, and prompt-cap exhaustion (`agent-hooks/block-memory-tool.sh`).
 
 ### Optimization Pattern: `pre_tool_call` Interceptor & Redirection
@@ -71,7 +71,7 @@ hooks:
 
 ## 3. Cache-Safe System Prompt Sections
 
-### The Problem
+### The Problem: Prompt-Cache Invalidation from Dynamic Injections
 Injecting dynamic rules or recalled memories into the LLM system prompt on every turn via un-bounded `pre_llm_call` callbacks mutates the system prompt text, invalidating model provider prompt caches (e.g., Anthropic, OpenAI) and driving up token latency and costs.
 
 ### Optimization Pattern: `register_system_prompt_section`
@@ -99,14 +99,14 @@ def register(ctx):
 
 ## 4. Subagent Delegation Tracking (`subagent_start` & `subagent_stop`)
 
-### The Problem
+### The Problem: Unobserved Subagent Failures & Execution Drift
 When Finch or an orchestrating agent spawns child agents via `delegate_task`, subagent errors, iteration limits, or successes are buried inside nested subagent session transcripts.
 
 ### Optimization Pattern: Lifecycle Observers for Delegation
 Hermes exposes `subagent_start` and `subagent_stop` observer hooks:
 
 - **`subagent_start`**: Records child task goal, parent session ID, child role, and allocated child subagent ID.
-- **`subagent_stop`**: Receives `child_status` (`completed`, `failed`, `interrupted`), `child_summary`, `duration_ms`, and redacted `tool_call_history`.
+- **`subagent_stop`**: Receives `child_status` (`completed`, `failed`, `interrupted`), `child_summary`, `duration_ms`, and redacted `tool_call_history`. Non-completed executions are buffered to `subagent_failures.jsonl` with process locks.
 
 ```python
 def on_subagent_completed(parent_session_id: str, child_role: str, child_status: str, duration_ms: int, **kwargs):
@@ -118,7 +118,7 @@ def on_subagent_completed(parent_session_id: str, child_role: str, child_status:
 
 ## 5. Gateway Compression & Session Lifecycle Integration
 
-### The Problem
+### The Problem: Unmanaged Memory Capacity Across Session Boundaries
 When context compression triggers (`session:compress`) or a session resets (`session:reset`, `on_session_reset`), session state rotates. If `MEMORY.md` is near its character cap (~79%+ capacity), compaction should occur immediately before the new compressed session state is persisted.
 
 ### Optimization Pattern: Automated Compaction Gate
