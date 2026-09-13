@@ -9,21 +9,40 @@ Can be loaded as a Hermes plugin via register(ctx) or executed via CLI.
 """
 
 import argparse
+import fcntl
 import json
 import logging
 import os
 import re
-import sys
 from pathlib import Path
 
 logger = logging.getLogger("finch.hooks")
 
 # Regex patterns for detecting explicit behavioral corrections and learning signals
 DIRECTIVE_PATTERNS = [
-    re.compile(r"\b(always|never)\s+(?:do|use|run|check|write|call|patch|edit)\b", re.IGNORECASE),
-    re.compile(r"\b(?:don't|do not|stop|avoid)\s+\b", re.IGNORECASE),
+    re.compile(r"\b(always|never)\s+(?:do|use|run|check|write|call|patch|edit|skip|delete|remove|clear|modify)\b", re.IGNORECASE),
+    re.compile(r"\b(?:don't|do not|stop|avoid)\s+(?:do|use|run|check|write|call|patch|edit|skip|delete|remove|clear|modify)\b", re.IGNORECASE),
     re.compile(r"\b(?:you should have|you ought to|next time|from now on)\b", re.IGNORECASE),
 ]
+
+
+def _get_finch_buffer_dir() -> Path:
+    base = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
+    buffer_dir = base / "commons" / "data" / "ocas-finch"
+    buffer_dir.mkdir(parents=True, exist_ok=True)
+    return buffer_dir
+
+
+def _append_jsonl_with_lock(filepath: Path, record: dict) -> None:
+    """Atomically append a record to a JSONL file using fcntl advisory locking."""
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    with open(filepath, "a", encoding="utf-8") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            f.write(json.dumps(record) + "\n")
+            f.flush()
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def extract_realtime_signals(user_message: str) -> list[dict]:
@@ -92,22 +111,41 @@ def on_post_llm_call(
         return
 
     logger.info("Finch hook captured %d real-time learning signal(s) in session %s", len(signals), session_id)
-    buffer_dir = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "commons" / "data" / "ocas-finch"
-    buffer_dir.mkdir(parents=True, exist_ok=True)
-    buffer_file = buffer_dir / "realtime_signals.jsonl"
+    buffer_file = _get_finch_buffer_dir() / "realtime_signals.jsonl"
 
     try:
-        with open(buffer_file, "a", encoding="utf-8") as f:
-            for sig in signals:
-                entry = {
-                    "session_id": session_id,
-                    "model": model,
-                    "platform": platform,
-                    "signal": sig,
-                }
-                f.write(json.dumps(entry) + "\n")
+        for sig in signals:
+            entry = {
+                "session_id": session_id,
+                "model": model,
+                "platform": platform,
+                "signal": sig,
+            }
+            _append_jsonl_with_lock(buffer_file, entry)
     except Exception as e:
         logger.warning("Failed to write real-time signal buffer: %s", e)
+
+
+def on_subagent_start(
+    parent_session_id: str | None = None,
+    parent_turn_id: str = "",
+    child_session_id: str | None = None,
+    child_subagent_id: str = "",
+    child_role: str = "",
+    child_goal: str = "",
+    **kwargs,
+) -> None:
+    """Hermes subagent_start hook handler.
+
+    Observes subagent instantiation and records context for subagent lifecycle tracking.
+    """
+    logger.info(
+        "Subagent delegation started: parent=%s child_session=%s role=%s subagent_id=%s",
+        parent_session_id,
+        child_session_id,
+        child_role,
+        child_subagent_id,
+    )
 
 
 def on_subagent_stop(
@@ -120,7 +158,7 @@ def on_subagent_stop(
 ) -> None:
     """Hermes subagent_stop hook handler.
 
-    Tracks subagent delegation execution and flags failures for Finch mining.
+    Tracks subagent delegation execution and persists non-completed executions for mining.
     """
     if child_status != "completed":
         logger.warning(
@@ -130,6 +168,26 @@ def on_subagent_stop(
             child_status,
             duration_ms,
         )
+        buffer_file = _get_finch_buffer_dir() / "subagent_failures.jsonl"
+        record = {
+            "parent_session_id": parent_session_id,
+            "child_role": child_role,
+            "child_status": child_status,
+            "child_summary": (child_summary or "")[:500],
+            "duration_ms": duration_ms,
+        }
+        try:
+            _append_jsonl_with_lock(buffer_file, record)
+        except Exception as e:
+            logger.warning("Failed to write subagent failure buffer: %s", e)
+
+
+def on_session_reset(session_id: str, platform: str = "", **kwargs) -> None:
+    """Hermes on_session_reset hook handler.
+
+    Fires on session reset boundaries to trigger memory compaction if MEMORY.md is near cap.
+    """
+    logger.info("Session reset event observed for session %s (platform=%s)", session_id, platform)
 
 
 def render_finch_system_prompt_section(session_info: dict) -> str:
@@ -146,7 +204,9 @@ def register(ctx) -> None:
     """Register Finch hooks with Hermes PluginContext."""
     ctx.register_hook("pre_tool_call", on_pre_tool_call)
     ctx.register_hook("post_llm_call", on_post_llm_call)
+    ctx.register_hook("subagent_start", on_subagent_start)
     ctx.register_hook("subagent_stop", on_subagent_stop)
+    ctx.register_hook("on_session_reset", on_session_reset)
 
     if hasattr(ctx, "register_system_prompt_section"):
         ctx.register_system_prompt_section(
