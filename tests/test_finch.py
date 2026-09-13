@@ -172,6 +172,64 @@ class MemoryRouting(unittest.TestCase):
             self.assertNotIn("profiles", str(m.MEMORY_FILE))
 
 
+class FinchHooksPluginTests(unittest.TestCase):
+    """Tests for finch_hooks_plugin.py."""
+
+    def test_extracts_realtime_directives(self):
+        import finch_hooks_plugin
+        text = (
+            "Hello agent.\n"
+            "Always run unit tests before submitting changes.\n"
+            "Never write to MEMORY.md directly.\n"
+            "Don't skip verification steps.\n"
+        )
+        signals = finch_hooks_plugin.extract_realtime_signals(text)
+        self.assertEqual(len(signals), 3)
+        phrases = [s["phrase"] for s in signals]
+        self.assertIn("Always run unit tests before submitting changes.", phrases)
+        self.assertIn("Never write to MEMORY.md directly.", phrases)
+        self.assertIn("Don't skip verification steps.", phrases)
+
+    def test_blocks_built_in_memory_tool(self):
+        import finch_hooks_plugin
+        blocked = finch_hooks_plugin.check_memory_tool_call("memory", {"content": "test"})
+        self.assertIsNotNone(blocked)
+        self.assertEqual(blocked["action"], "block")
+        self.assertIn("restricted", blocked["message"])
+
+        allowed = finch_hooks_plugin.check_memory_tool_call("terminal", {"command": "ls"})
+        self.assertIsNone(allowed)
+
+    def test_registers_hooks_and_system_prompt_section(self):
+        import finch_hooks_plugin
+
+        class MockCtx:
+            def __init__(self):
+                self.hooks = {}
+                self.sections = {}
+
+            def register_hook(self, name, handler):
+                self.hooks[name] = handler
+
+            def register_system_prompt_section(self, section_id, content_fn, position, max_chars):
+                self.sections[section_id] = {
+                    "content_fn": content_fn,
+                    "position": position,
+                    "max_chars": max_chars,
+                }
+
+        ctx = MockCtx()
+        finch_hooks_plugin.register(ctx)
+        self.assertIn("pre_tool_call", ctx.hooks)
+        self.assertIn("post_llm_call", ctx.hooks)
+        self.assertIn("subagent_stop", ctx.hooks)
+        self.assertIn("finch.memory-rules", ctx.sections)
+
+        section = ctx.sections["finch.memory-rules"]
+        rendered = section["content_fn"]({})
+        self.assertIn("Finch Memory & Learning Rules", rendered)
+
+
 class ScriptsExposeHelp(unittest.TestCase):
     """Every script must answer --help without optional deps installed."""
 
