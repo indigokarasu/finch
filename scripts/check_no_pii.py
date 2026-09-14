@@ -27,6 +27,7 @@ Exit 0 = clean, 1 = findings, 2 = bad invocation.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -105,17 +106,16 @@ def load_denylist() -> list[str]:
 
 
 def iter_files(root: Path):
-    for p in sorted(root.rglob("*")):
-        if not p.is_file():
-            continue
-        if any(part in SKIP_DIRS for part in p.parts):
-            continue
-        name = p.name
-        if any(s in name for s in SKIP_SUFFIX_PARTS):
-            continue
-        if p.name == DENYLIST_FILE.name:
-            continue
-        yield p
+    # Optimize traversal: use os.walk to prune skipped directories (e.g., node_modules, .git, .venv)
+    # before recursing into them, and use tuple str.endswith for suffix filtering.
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for name in sorted(filenames):
+            if name.endswith(SKIP_SUFFIX_PARTS):
+                continue
+            if name == DENYLIST_FILE.name:
+                continue
+            yield Path(dirpath) / name
 
 
 def scan_text(text: str, denylist: list[str]):
