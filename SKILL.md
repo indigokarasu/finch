@@ -12,7 +12,7 @@ includes:
 - scripts/**
 metadata:
   author: <profile> Karasu (indigokarasu)
-  version: 3.1.0
+  version: "3.2.0"
   hermes:
     category: software-development
     tags:
@@ -188,7 +188,7 @@ Finch operates as a continuous improvement cycle:
    - Set the task's status to `"done"`
    - Set the task's `done_at` timestamp to the completion time
    - Update the task's `updated_at` timestamp
-   Route findings to MEMORY.md, skill patches, or reference files.
+   Route findings to MEMORY.md, skill patches, or reference files. **Stage proposed skill patches** under `{agent_root}/commons/data/ocas-forge/staged/{skill}/` for `ocas-fellow` evaluation before committing to production (per the staged-write-approval gate; do not directly apply a rebuilt skill without benchmark verification). MEMORY.md behavioral rules apply immediately (priority 0); skill rebuilds go through staging.
 
 ### Task selection priority (finch:work)
 
