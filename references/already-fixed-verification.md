@@ -43,3 +43,14 @@ When a task says "implement X" and you find X already exists, the correct outcom
 ## Distinction from Signal Triage
 
 Signal triage (see `references/signal-triage-before-fix.md`) decomposes a task into distinct root causes. Already-fixed verification checks whether the code already implements the requested fix. Use signal triage when the task says "fix these errors." Use already-fixed verification when the task says "implement this feature" or "investigate this systemic issue."
+
+## Mirror case: repair already landed while the task prose says "no progress"
+
+Scan-side progress claims ("no repair progress in last-24h sessions") lag reality — a fix can land between the last signal update and the current run, and the applying actor may leave no message trace. Close repair tasks against the ARTIFACT's own evidence boundaries, not the task note:
+
+1. **File boundary** — `stat` the file(s) the fix must have touched. An mtime inside the failure window, plus a named snapshot/backup (`.bak-*` carrying the fix label), is a fix fingerprint.
+2. **Log boundary** — find the last-bad → first-good transition in the artifact's own operational log, and confirm the change time sits between the two runs that produced it.
+3. **Live state files** — status/signature files the fixed component maintains (e.g. an alert's current status + dedup signature both reading OK).
+4. **Live probe** — where a probe is cheap and side-effect-free, exercise the fixed path end-to-end.
+
+If the boundaries line up, close as verified-fixed citing the boundary evidence — do not re-apply or "improve" the landed fix. If the artifact shows no change, only then treat the repair as outstanding. This beats actor attribution: state transitions cannot be misremembered.
