@@ -107,3 +107,26 @@ Rules:
   a dozen scans.
 - Never "fix" a phantom by *creating* the referenced file. That manufactures an
   artifact to justify the ticket and converts a no-op into permanent sprawl.
+
+## 7. Ledger "fix applied / job seeded" claims need live-verification before closing an item
+
+A custodian/escalation ledger (`issues.jsonl`, `escalation-runner-state.json`, journal
+`fixes_applied`) can record a fix that never landed. Observed 2026-09-23: a ledger
+entry marked a cron-timeout issue **resolved** with "Seeded a new cron job
+`<job-name>` (id: `<hex-id>`)" — but the id was absent from BOTH the live profile
+registry and the default registry, including a `jobs.json` snapshot written ~16 min
+after the claimed seed; the escalation runner's own `fixes_pending` list still
+carried the item.
+
+Rules:
+- Before treating a superseded/erroring job as resolved on a ledger claim, grep the
+  live registry for the claimed seed:
+  `grep -c "<hex-id>" ~/.hermes/profiles/<profile>/cron/jobs.json`
+  → 0 matches means the seed claim is UNVERIFIED. Keep the finch task open and
+  record the claim-vs-registry discrepancy for the next scan.
+- A re-validation that TIMED OUT ("re-run timed out after Ns") is a FAILED
+  re-validation, not a validated fix — the registry still shows `last_status=error`.
+  Never inherit the ledger's resolved status from it.
+- Cross-check `<fs-root>/commons/data/ocas-custodian/escalation-runner-state.json`
+  `fixes_pending` — it often still lists the item as pending even after its issue
+  record says resolved.

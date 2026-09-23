@@ -14,7 +14,7 @@ and routes entries to the right tier during compaction:
 | **Tier 1** | MEMORY.md | Behavioral directives (Always/Never), cross-cutting corrections, critical operating constraints | Every session (system prompt) |
 | **Tier 2** | Skill SKILL.md / references/ | Tool-usage facts, service-specific gotchas, howtos for a specific tool or API | When that skill is loaded |
 | **Tier 3** | Reference files (references/) | Detailed guides, config references, URLs, paths, canonical patterns | On demand (read when needed) |
-| **Tier 4** | Chronicle / See references/integration-notes.md for current backend architecture. KG | Entity facts, relationships, durable world knowledge | Queried via elephas.query |
+| **Tier 4** | Chronicle / See references/integration-notes.md for current backend architecture. KG | Entity facts, relationships, durable world knowledge | Queried via chronicle.query |
 
 ### Concept classification guide
 
