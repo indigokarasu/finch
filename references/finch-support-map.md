@@ -44,3 +44,11 @@
 || `references/hermes-hooks-integration.md` | When optimizing Finch for Hermes Agent Hooks — lifecycle events, plugin/shell/gateway hook patterns, real-time signal observation, memory tool interception, subagent monitoring. ||
 || `references/concurrent-write-recovery.md` | When a write_file/read_file warns of a sibling-subagent concurrent modify, OR read_file/search_files throw `DaemonThreadPoolExecutor` — read-back + `stat` mtime check, `terminal` fallback. ||
 
+## Additional files
+
+| File | Notes |
+|------|-------|
+| `archive/README.md` | Deprecated scripts |
+| `references/security_architecture.md` | Security Architecture Reference |
+| `references/skill-audit-methodology.md` | Skill Audit Methodology |
+| `scripts/finch_scan_tasklist_rerank.py` | finch_scan_tasklist_rerank.py - safe re-rank + validate for ocas-finch task-list.json. WHY: finch:scan must... |
