@@ -83,7 +83,7 @@ Key observations — systemic 503:
 
 | Category | Count | Severity | Affected Jobs | Root Cause |
 |---|---|---|---|---|
-| provider-capacity | 11 | LOW | bower:scan, mentor:deep, vesper:morning, vesper:evening, ocas-finch:daily, bones:research, Koda Dispatcher ×3, menu-monitor-weekly | HTTP 503 upstream capacity (OpenRouter) |
+| provider-capacity | 11 | LOW | bower:scan, mentor:deep, vesper:morning, vesper:evening, ocas-finch:daily, bones:research, dispatcher ×3, menu-monitor-weekly | HTTP 503 upstream capacity (OpenRouter) |
 | rate-limit | 1 | LOW | weave:overnight-enrichment | HTTP 429 rate limit |
 | script-exit | 3 | varies | praxis:review, bones:market-monitor, bones:position-tracker | Script exited code 1 — check stdout for detail |
 | interpreter-shutdown | 2 | LOW | reach:api-mine, sands:travel-check | RuntimeError interpreter shutdown (transient) |
