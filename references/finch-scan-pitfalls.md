@@ -25,7 +25,7 @@ anti-pattern is why the skill mandates live re-validation every cycle, and why
 ## 2. The `expanduser("...{PROFILE}...")` missing-f-string bug class
 A frequent cause of `FileNotFoundError` in profile-aware scripts:
 ```python
-PROFILE = os.environ.get("HERMES_PROFILE", "indigo")
+PROFILE = os.environ.get("HERMES_PROFILE", "<profile>")
 AGENT_ROOT = os.path.expanduser("~/.hermes/profiles/{PROFILE}")   # BUG: literal {PROFILE}
 ```
 `expanduser` only substitutes `~`; the `{PROFILE}` braces are NOT interpolated
@@ -59,3 +59,51 @@ validation error ("user_google_email Missing required argument") if
 `user_google_email` is omitted — even though `search_gmail_messages` may appear
 to work without it. Always pass `user_google_email="<operator_email>"` on EVERY
 gws_* call (search, content batch, get_events, list_drive_items).
+
+## 5. task-list.json SCHEMA CLOBBER — a scan can replace the `tasks` array with a 2-item `open_issues` stub
+
+Confirmed 2026-09-22 (finch:scan #96). The LIVE
+`<fs-root>/data/ocas-finch/task-list.json` had been overwritten (mtime
+09-22T08:07) with a stub shaped `{"as_of", "generated_by", "open_issues":[2],
+"summary"}` — top-level key `open_issues`, NOT the canonical `tasks`. 33 tasks
+were lost, and both surviving items were noise (one a phantom artifact, one a
+already-healthy job). A subsequent scan that trusts the file as "the task list"
+will rebuild from 2 items and silently discard every real open issue.
+
+Detection (mandatory, first thing after `json.load`):
+```python
+d = json.load(open(TL))
+assert "tasks" in d, f"CORRUPT: top-level keys={list(d)} — expected 'tasks'"
+```
+A missing `tasks` key is CORRUPTION, never "an empty list". Do not append to
+`open_issues`.
+
+Recovery (single script, one process, validate-after-write — never `patch`):
+1. Copy the stub aside as `task-list.json.stub-<MMDD>` for forensics. Never `rm`
+   it — the stub's contents are evidence of what the writer believed.
+2. Restore from the newest `task-list.json.bak-scan<N>` (these backups are
+   written by every scan and are the recovery source of truth).
+3. Re-apply this scan's signal updates to the restored tasks, append only ids
+   not already present, re-sort by priority, set `version`/`scan_count`/
+   `scan_cycle`/`updated_at`, write to a tempfile in the same dir, `os.replace`,
+   then `json.load` the result.
+4. Report the loss + restoration explicitly in the journal (`task_list_integrity`
+   block) — a silent restore hides a real corruption event.
+
+## 6. Phantom-artifact validation — prove the path exists BEFORE re-verifying
+
+A pending task that names a file (or a directory) is unverifiable until that
+path is proved to exist. The 09-22 stub carried
+"Read-truncation recurrence in scan reads", asking the next scan to re-verify
+`jobs.txt` / `tasks.txt` / `skilldir.txt`. `find <fs-root> -maxdepth 5` for
+all three returned NOTHING — the artifacts were never real products of this
+skill, so there was no truncation to re-verify and no fix to confirm.
+
+Rules:
+- Run the filesystem check FIRST: `find <root> -maxdepth N -name '<file>'`.
+- Path absent ⇒ resolve the task as **PHANTOM** (`status: done`, with the
+  path-absence command recorded as evidence). Never carry it forward as
+  `pending_verification` — that is how a phantom item becomes load-bearing for
+  a dozen scans.
+- Never "fix" a phantom by *creating* the referenced file. That manufactures an
+  artifact to justify the ticket and converts a no-op into permanent sprawl.
