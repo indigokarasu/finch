@@ -27,7 +27,7 @@ correct tier — don't just evict. Only evict when the knowledge is truly stale
 | **Skill references/** | 2 | Detailed howtos, API references, service-specific guides for a skill. | `write_file` tool |
 | **Reference files** (cross-session reference directory) | 3 | Cross-session canonical patterns, guides, references. Created when a finding doesn't fit cleanly in MEMORY.md or a single skill. | `write_file` tool |
 | **Reference INDEX** (cross-session reference directory) | 3 | One-line "when to use" entry for each reference file. Updated whenever a new reference file is created. | `patch` or `write_file` tool |
-| **Chronicle / See references/integration-notes.md for current backend architecture. KG** | 4 | Entity facts, relationships, durable world knowledge. | See references/integration-notes.md for current backend architecture. bridge or `elephas.ingest` |
+| **Chronicle / See references/integration-notes.md for current backend architecture. KG** | 4 | Entity facts, relationships, durable world knowledge. | See references/integration-notes.md for current backend architecture. bridge or `chronicle.ingest` |
 | **decisions.jsonl** | — | DecisionRecord per routing decision | Direct write |
 | **intents.jsonl** | — | Durable intent queue | Direct write |
 | **evidence.jsonl** | — | Execution evidence log | Direct write |
