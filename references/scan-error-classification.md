@@ -89,6 +89,20 @@ Key observations — systemic 503:
 | interpreter-shutdown | 2 | LOW | reach:api-mine, sands:travel-check | RuntimeError interpreter shutdown (transient) |
 | degraded | 1 | P3 | rally:pipeline-watchdog | DEGRADED (1_new_connectivity_issues) |
 
+## Budget-exhaustion 502 class (HO-ROUTER-BUDGET) — new 2026-09-23
+
+A distinct, self-resolving class: `HTTP 502: no backend could serve the request; last error: or-deepseek-v41-flash: refused, est $0.00xx exceeds the $0.0000 remaining of today's $3.00 budget`.
+
+This is NOT provider drift and NOT capacity — the LLM router has a hard daily budget ceiling (`<fs-root>/.hello-operator/budget.json`, `day` + `spent_usd`). When the day's budget is exhausted, every LLM cron job routed through the paid model fails with this 502 until UTC midnight rolls the budget day.
+
+| Category | Error signature | Severity | Resolves |
+|---|---|---|---|
+| `budget-exhaustion` | `502 … exceeds the $0.0000 remaining of today's $3.00 budget` | LOW | auto, on UTC-midnight budget rollover |
+
+**Verification rule (do NOT declare a fix):** classify as stale by `last_run_at`, not by error text — the string carries no date. Compare each affected job's `last_run_at` against the UTC-midnight rollover; if `last_run_at` < rollover AND `budget.json.day` has advanced, the error is a stale pre-rollover artifact. The job has NOT been re-run on the fresh budget yet, so do not claim recovery — report "stale, expect self-resolve on next natural tick". Only claim active failure if a job re-ran AFTER rollover and still 502'd.
+
+**Grouping:** group all budget-502 jobs into ONE umbrella task with the rollover state (old day / new day / spent). Do not create per-job tasks. When the umbrella task's root causes are cleared and the recovery was verified by a prior scan, resolve it and note the stale 502 count — do not re-open daily.
+
 ## Key rules (unchanged from prior versions)
 
 - **oauth-token-expired is CRITICAL, not transient** — it will never self-resolve. Report it every scan until the user re-authenticates. Do not downgrade or mark as stale.
