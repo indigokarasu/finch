@@ -9,6 +9,7 @@ rather than on every invocation. Content is unchanged.
 | Repeated check-and-close anti-pattern (work execution) | when a task keeps reappearing across runs |
 | Task actionability filter (cron context) | when finch:work runs without a user present |
 | Pipeline task resumption (ledger/state-based) | when a task was interrupted mid-pipeline |
+| Correspondence-thread monitoring (email waiting-tasks) | when verifying an email thread that is awaiting a reply |
 
 ### Repeated check-and-close anti-pattern (work execution)
 
@@ -40,6 +41,12 @@ When a `monitor`/actionable task carries an explicit re-evaluation instruction (
 5. **Close only on live recovery.** Flip monitor→done only when live signal shows the error cleared (last_status=ok on the post-T tick); never on the note's assertion alone.
 
 **Confirmed 2026-07-24 finch:work (`dispatch-summary-interpreter-shutdown-0724`):** eval ran at 12:33PDT, 17 min before the 12:50 retry; live jobs.json showed `next_run_at` still 12:50 + `last_status` error; the task note's "12:50 retry fired and self-recovered" claim was a false-positive. Gate unmet → no guard applied; monitor retained; discrepancy flagged in the note. This is the model behavior for re-eval-gated monitor tasks.
+
+#### Correspondence-thread monitoring (email waiting-tasks)
+
+For email tasks in a "waiting on a reply" state ("monitor for response", "may need follow-up / scheduling"), verify against the FULL thread, not a single-message search: fetch every message (`users().threads().get(format="full")`) and read the true latest message + who owes the next reply. Crossing replies are common; only the full thread tells you whose court the ball is in. For scheduling threads, pair with a calendar probe (next 14 days) to confirm whether an invite actually exists — "Jared replied" does not mean "meeting scheduled". Record the completion signal ("next message from X", "invite sent") in the task note, then STOP: do not re-verify the same stable fact on later runs. A stable user/external-blocked thread is downgraded to `watching` with a `blocked_reason` — not re-checked.
+
+**Timestamp hygiene:** stamp task/journal/decision times from live clock output (`date -u` / `datetime.now(timezone.utc)`) — never compute UTC mentally; mis-stamped reviews (hours in the future) distort freshness ordering and decay logic.
 
 #### Constructive progress while blocked (work execution)
 
