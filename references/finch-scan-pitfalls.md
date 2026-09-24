@@ -130,3 +130,28 @@ Rules:
 - Cross-check `<fs-root>/commons/data/ocas-custodian/escalation-runner-state.json`
   `fixes_pending` — it often still lists the item as pending even after its issue
   record says resolved.
+
+## 8. Gmail-direct puller module: call its lazy bootstrap before load_creds()
+The direct-puller module (fallback for Gmail/Calendar/Drive pulls) defers importing
+its Google client libraries behind an explicit bootstrap function. Importing the
+module and calling `load_creds(...)` straight away fails (`NameError: Credentials
+is not defined` style) because module-level globals are still `None`. Pattern:
+```python
+import <puller> as gp
+gp._require_google()      # populate the deferred google-globals FIRST
+creds, data, path = gp.load_creds("<operator_email>")
+creds = gp.ensure_fresh(creds, data, path)
+```
+Also run probe scripts with the SAME venv python the gateway/cron uses — a wrong
+interpreter path fails the module's dependency probe for unrelated reasons.
+
+## 9. Cron context may lack interactive-only tools (session_search) — read the live sqlite store
+In a scheduled cron run, tools that exist interactively (e.g. `session_search`)
+may not be registered. For the sessions source, query the live `state.db` sqlite
+file directly: table `messages` (session_id, role, content, timestamp) plus the
+sessions table for titles/activity windows. Caveat: continued sessions carry
+REPLAYED context rows whose timestamps PREDATE the session start — identical
+content/timestamp duplicates appearing across several session ids are replay
+artifacts, not new activity. Determine "latest real activity" from max timestamp
+per session (plus rowid ordering), and treat only messages newer than the newest
+non-replay row as fresh signal.
