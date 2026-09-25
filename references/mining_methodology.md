@@ -112,3 +112,28 @@ DecisionRecord entries in `{agent_root}/commons/data/ocas-finch/decisions.jsonl`
    sqlite3 ~/.hermes/state.db "SELECT id, source, started_at, title, message_count FROM sessions WHERE source IN ('telegram','cli','web') AND started_at > ? ORDER BY started_at DESC LIMIT 50"
    ```
    Use the `id` column values as `session_id` for subsequent `session_search(session_id=...)` calls to read full session content. The 10-result cap means finch:weekly can miss older interactive sessions if there are more than 10 cron sessions newer than them.
+
+## Failure-phase taxonomy (from arxiv:2508.13143)
+
+When mining corrections and failures, categorize each by the task phase where the failure occurred. This enables targeted skill patches instead of vague "be more careful" updates:
+
+| Phase | Description | Example signal |
+|-------|-------------|----------------|
+| **Planning** | Wrong approach chosen, incorrect assumptions, missing prerequisites | "You should have checked X first" |
+| **Execution** | Right plan but tool call/API/step failed, wrong parameters, timeout | "The command failed because..." |
+| **Response** | Correct result but wrong format, verbosity, tone, or framing | "Too verbose" / "Wrong format" |
+
+Route planning-phase corrections to skill preconditions/setup sections. Route execution-phase corrections to tool-usage/gotchas sections. Route response-phase corrections to output-formatting sections. This produces surgical patches instead of blanket directives.
+
+## Elaborative interrogation (from Dunlosky et al. 2013)
+
+When recording a correction or lesson, don't just capture WHAT was wrong — extract the underlying principle by asking "why" and "when":
+
+- **Why was this wrong?** — What assumption was violated? What constraint was unknown?
+- **When does this apply?** — What contexts trigger this pattern? What's the boundary condition?
+- **What's the causal mechanism?** — Why does the correct approach work?
+
+Format: `[CORRECTION] What: <what was wrong>. Why: <underlying principle>. When: <applicable context>`
+
+This produces lessons that transfer across contexts, not just single-instance fixes.
+

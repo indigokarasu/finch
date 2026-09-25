@@ -43,6 +43,12 @@ When the user expressed a style/format/workflow preference, the update belongs i
 
 Pinned skills CAN be improved — pin only blocks deletion/archive/consolidation by the curator, not content updates.
 
+## Skill integration hygiene (upstream/shared skills)
+
+When adding external or upstream skills to the local library, prefer integrating relevant LEARNINGS into the closest existing skill rather than installing a new conflicting skill. For upstream skill repos the operator shares: (1) determine whether any capability overlaps an existing skill; (2) if yes, merge the valuable parts into that skill (including code-review patterns the operator may say were "skipped"); (3) only install a new skill if it has no close match and won't conflict. Operator directive: "integrate them into the closest match, don't install new skills that may conflict."
+
+**Active-review mandate:** A review pass that finds no signal is a missed learning opportunity, not a neutral outcome. Most finch passes surface at least one skill update — even a small pitfall or support-file note. Prefer patching the skill that was in play this run over creating a new narrow skill.
+
 ## Overlap detection
 
 If you notice two existing skills that overlap, note it in your reply — the background curator handles consolidation at scale.
