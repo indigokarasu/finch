@@ -103,7 +103,11 @@ class MemoryRouting(unittest.TestCase):
             import memory_state
             m = importlib.reload(memory_state)
             self.assertEqual(m.MEMORY_FILE, home / "memories" / "MEMORY.md")
-            self.assertNotIn("profiles", str(m.MEMORY_FILE))
+            # The regression is about a 'profiles' component introduced INSIDE
+            # the HERMES_HOME resolution. The temp dir the test runs in may
+            # itself sit under a profiles/ subtree (TMPDIR), so assert on the
+            # path RELATIVE to home, not the absolute string.  # pii-allow
+            self.assertNotIn("profiles", m.MEMORY_FILE.relative_to(home).parts)
 
 
 class FinchHooksPluginTests(unittest.TestCase):
