@@ -103,9 +103,6 @@ python3 scripts/memory_guard.py --json
 
 Run as Step 7 of `finch.compact` or independently via `finch:memory-guard-floor` cron (every 6h).
 
-### self_update.py / self_update.sh
-`self_update.py` must be a real Python wrapper (not a bash script with a `.py` extension) and must resolve the skill directory from `Path(__file__).resolve().parents[1]`, never from a hardcoded default-profile path like `~/.hermes/skills/ocas-finch`. Manual Finch runs should execute `python3 scripts/self_update.py` and require exit 0 before reporting update health. `self_update.sh` is the GitHub-version fetch/install path; if it exits 1 with no output, inspect the `gh api`/remote-version step rather than treating Finch as generally broken.
-
 ### memory_state.py
 Persisted reinforcement-state store. Computes Ebbinghaus forgetting curve across runs.
 
