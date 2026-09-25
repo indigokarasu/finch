@@ -33,4 +33,10 @@
 |------|-------|
 | `references/security_architecture.md` | Security Architecture Reference |
 | `references/skill-audit-methodology.md` | Skill Audit Methodology |
+| `references/manual-run-verification.md` | When the user says "run finch", jobs 401 en masse, or you must force a cron run |
+| `references/sepagree-verify-rules.md` | When finch:work picks EMAIL-SEPAGREE — canonical-script rules for Docusign re-verification |
+| `references/email-mcp-triage.md` | During email triage — metadata-first classification, full-body only for candidates |
+| `references/work-execution-procedures.md` | Before executing any finch:work task — triage, actionability, resumption, anti-patterns |
+| `references/work-prescribed-fix-selfrecovery-guard.md` | When a task prescribes a specific fix — check self-recovery / fail-loud guards first |
+| `references/reference-file-workflow.md` | Before writing any reference file — genericisation placeholders and write workflow |
 | `scripts/finch_scan_tasklist_rerank.py` | finch_scan_tasklist_rerank.py - safe re-rank + validate for ocas-finch task-list.json. WHY: finch:scan must... |
