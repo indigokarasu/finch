@@ -48,6 +48,8 @@ For email tasks in a "waiting on a reply" state ("monitor for response", "may ne
 
 **Timestamp hygiene:** stamp task/journal/decision times from live clock output (`date -u` / `datetime.now(timezone.utc)`) — never compute UTC mentally; mis-stamped reviews (hours in the future) distort freshness ordering and decay logic.
 
+**DRAFT vs SENT label check (mandatory before recording 'reply sent'):** A message from the user's address inside an email thread may be an UNSENT DRAFT — its content can read like a delivered reply. Check `labelIds` on the candidate message: `DRAFT` (or presence in `drafts.list()`) = never sent; `SENT` = sent. Record 'reply sent' only on `SENT`. Confirmed 2026-09-24 (BJAK thread): a work pass logged 'acceptance reply confirmed sent' from draft content; the next ground-truth check (threads.get + drafts.list + label check) found it unsent, corrected the record, and reclassified the task as user-blocked (book + send) rather than awaiting the external party.
+
 #### Constructive progress while blocked (work execution)
 
 When a task is blocked on an external party (<operator> login, third-party OAuth, a human decision) but has an the agent-owned executable sub-component, **build that component now** rather than re-verifying the block. This converts a no-op check into durable, reusable tooling.
