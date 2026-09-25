@@ -9,7 +9,21 @@ Can be loaded as a Hermes plugin via register(ctx) or executed via CLI.
 """
 
 import argparse
-import fcntl
+try:
+    import fcntl
+    _flock, _LOCK_EX, _LOCK_UN = fcntl.flock, fcntl.LOCK_EX, fcntl.LOCK_UN
+except ImportError:  # POSIX-only stdlib; degrade to best-effort append elsewhere
+    _flock, _LOCK_EX, _LOCK_UN = None, 0, 0
+
+
+def _lock(f):
+    if _flock is not None:
+        _flock(f, _LOCK_EX)
+
+
+def _unlock(f):
+    if _flock is not None:
+        _flock(f, _LOCK_UN)
 import json
 import logging
 import os
@@ -34,15 +48,18 @@ def _get_finch_buffer_dir() -> Path:
 
 
 def _append_jsonl_with_lock(filepath: Path, record: dict) -> None:
-    """Atomically append a record to a JSONL file using fcntl advisory locking."""
+    """Atomically append a record to a JSONL file using fcntl advisory locking.
+
+    Falls back to an unlocked append when fcntl is unavailable (non-POSIX).
+    """
     filepath.parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, "a", encoding="utf-8") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+        _lock(f)
         try:
             f.write(json.dumps(record) + "\n")
             f.flush()
         finally:
-            fcntl.flock(f, fcntl.LOCK_UN)
+            _unlock(f)
 
 
 def extract_realtime_signals(user_message: str) -> list[dict]:
