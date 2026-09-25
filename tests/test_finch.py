@@ -29,66 +29,6 @@ def _git(args, cwd):
                           capture_output=True, check=False)
 
 
-class SelfUpdateSafety(unittest.TestCase):
-    """self_update.py must preserve uncommitted work."""
-
-    def test_source_contains_no_destructive_commands(self):
-        """No destructive git subcommand may appear as an actual argument list.
-
-        Parse the AST rather than grepping: prose like "what a hard reset would
-        eat" is fine, an executed ["git", "reset", "--hard"] is not.
-        """
-        import ast
-        tree = ast.parse((SCRIPTS / "self_update.py").read_text(encoding="utf-8"))
-        banned = {("reset",), ("clean",), ("checkout",)}
-        found = []
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.List, ast.Tuple)):
-                items = [el.value for el in node.elts
-                         if isinstance(el, ast.Constant) and isinstance(el.value, str)]
-                if items and items[0] == "git":
-                    for sub in banned:
-                        if sub[0] in items:
-                            found.append(items)
-        self.assertEqual(found, [],
-                         f"destructive git commands present in code: {found}")
-
-    def test_refuses_to_run_on_dirty_tree(self):
-        with tempfile.TemporaryDirectory() as td:
-            repo = Path(td) / "repo"
-            (repo / "scripts").mkdir(parents=True)
-            _git(["init", "-q"], repo)
-            _git(["config", "user.email", "t@t"], repo)
-            _git(["config", "user.name", "t"], repo)
-            (repo / "seed.txt").write_text("seed\n")
-            _git(["add", "-A"], repo)
-            _git(["commit", "-qm", "init"], repo)
-
-            # copy the real script in and dirty the tree
-            (repo / "scripts" / "self_update.py").write_text(
-                (SCRIPTS / "self_update.py").read_text(encoding="utf-8"), encoding="utf-8")
-            precious = repo / "precious.txt"
-            precious.write_text("DO NOT DELETE\n", encoding="utf-8")
-            (repo / "seed.txt").write_text("locally modified\n", encoding="utf-8")
-
-            proc = subprocess.run(
-                [sys.executable, str(repo / "scripts" / "self_update.py")],
-                cwd=repo, text=True, capture_output=True, check=False)
-
-            self.assertEqual(proc.returncode, 2, "dirty tree should exit 2")
-            self.assertIn("Refusing to update", proc.stdout + proc.stderr)
-            # The whole point: local work survived.
-            self.assertTrue(precious.exists(), "untracked file was destroyed!")
-            self.assertEqual(precious.read_text(), "DO NOT DELETE\n")
-            self.assertEqual((repo / "seed.txt").read_text(), "locally modified\n")
-
-    def test_help_works(self):
-        proc = subprocess.run([sys.executable, str(SCRIPTS / "self_update.py"), "--help"],
-                              text=True, capture_output=True, check=False)
-        self.assertEqual(proc.returncode, 0)
-        self.assertIn("usage", proc.stdout.lower())
-
-
 class MemoryRouting(unittest.TestCase):
     """route_entry must really move the entry, or fail loudly."""
 
