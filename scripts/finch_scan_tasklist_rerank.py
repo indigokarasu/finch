@@ -15,7 +15,7 @@ USAGE (cron profile where execute_code is BLOCKED - use terminal python3):
 --merge appends tasks from a sidecar JSON (a list, or {"tasks":[...]}) whose
 ids are not already present, then re-ranks everything.
 """
-import json, sys, os, tempfile, argparse, datetime
+import json, os, tempfile, argparse, datetime
 
 PRIO = {'P1': 1, 'P2': 2, 'P3': 3, 'P4': 4}
 DEFAULT = os.path.expanduser("~/.hermes/commons/data/ocas-finch/task-list.json")

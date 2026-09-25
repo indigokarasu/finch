@@ -24,7 +24,7 @@ Drop `info@` / `noreply@` / `no-reply@` + known bulk domains + `Precedence: Bulk
 
 Examples caught at metadata stage (real finch:scan finds): a paid consult
 invitation, an eBay return-ready notice, a DSN delivery-delay, a vendor V1->V2
-action-required. These need the operator-level action; everything else is noise.
+action-required. These need operator-level action; everything else is noise.
 
 ## Actionability verdict
 

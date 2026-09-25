@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """Regression tests for ocas-finch.
 
-Locks the two data-loss / silent-failure bugs found in the v2.15.3 review:
+Locks the data-loss / silent-failure bug found in the v2.15.3 review:
 
-  1. self_update.py must NEVER discard local work (it used to run
-     `git reset --hard` + `git clean -fd` unconditionally).
-  2. memory_state.route_entry must target the REAL MEMORY.md and must not
-     report OK when it removed nothing (it used to point at a
-     non-existent <profile>/MEMORY.md and silently no-op).
+  memory_state.route_entry must target the REAL MEMORY.md and must not
+  report OK when it removed nothing (it used to point at a
+  non-existent <profile>/MEMORY.md and silently no-op).
 
 Run:  python3 -m unittest discover -s tests -v
 """
@@ -22,11 +20,6 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
-
-
-def _git(args, cwd):
-    return subprocess.run(["git", *args], cwd=cwd, text=True,
-                          capture_output=True, check=False)
 
 
 class MemoryRouting(unittest.TestCase):

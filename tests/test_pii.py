@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Tests for the PII guard that keeps personal data out of this public repo."""
-import importlib
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -42,7 +40,7 @@ class PIIDetection(unittest.TestCase):
             "id <thread-id>\n"
             "env $OCAS_OPERATOR_EMAIL\n"
             "path ~/.hermes/profiles/<profile>/\n"
-            "sender@domain.com\n"
+            "sender@domain.com\n"  # pii-allow
         )
         self.assertEqual(self._hits(clean), [], f"false positives: {self._hits(clean)}")
 
