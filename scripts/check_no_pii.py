@@ -48,7 +48,12 @@ DENY_ALLOW = re.compile(r"Indigo Karasu|indigokarasu", re.IGNORECASE)
 # Domains/addresses that are documentation placeholders, not real people.
 ALLOWED_EMAIL = re.compile(
     r"@(example\.(com|org|net)|domain\.com|test\.invalid|localhost)$"
-    r"|^(you|user|someone|operator|counterparty|noreply|no-reply|name|email|sender|contact)@",
+    r"|^(you|user|someone|operator|counterparty|noreply|no-reply|name|email|sender|contact)@"
+    # Service no-reply senders are not people: noreply-accounts@google.com is a
+    # Google account-data notice, not a counterparty. Match the role prefix
+    # rather than the bare word so no-reply-anything@ is covered too.
+    r"|^(?:no[-_.]?reply|donotreply|mailer-daemon|postmaster|notifications?|alerts?)"
+    r"[-_.][A-Za-z0-9._-]*@",
     re.IGNORECASE,
 )
 

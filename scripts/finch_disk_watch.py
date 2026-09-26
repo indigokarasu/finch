@@ -33,10 +33,27 @@ TRIGGER_GROWTH_MB_24H = 5 * 1024  # 5 GB
 # Below this age, report growth as unknown rather than guessing.
 MIN_BASELINE_AGE_H = 1.0
 
+HOME_DIR = os.path.expanduser("~")
+PROFILE = os.environ.get("HERMES_PROFILE", "")
+
+
+def _db_target(rel):
+    """Resolve a DB path under this host's Hermes profile root.
+
+    Generic by construction: the profile name and home directory come from the
+    environment, so this file carries no host-specific path and works on any
+    machine that sets $HERMES_PROFILE. Skips targets when unset."""
+    if not PROFILE:
+        return None
+    return os.path.join(HOME_DIR, ".hermes", "profiles", PROFILE, rel)
+
+
 DB_TARGETS = [
-    ("chronicle.db", "/root/.hermes/profiles/indigo/commons/db/chronicle/chronicle.db"),
-    ("state.db", "/root/.hermes/profiles/indigo/state.db"),
-    ("rally.db", "/root/.hermes/profiles/indigo/commons/data/ocas-rally/rally.db"),
+    (name, path) for name, path in (
+        ("chronicle.db", _db_target("commons/db/chronicle/chronicle.db")),
+        ("state.db", _db_target("state.db")),
+        ("rally.db", _db_target("commons/data/ocas-rally/rally.db")),
+    ) if path
 ]
 
 
@@ -75,7 +92,10 @@ def save_baseline(used_mb, pct, path=None):
     return payload
 
 
-def top_dirs(paths=("/root", "/var", "/usr", "/opt"), depth=2, limit=15):
+def top_dirs(paths=None, depth=2, limit=15):
+    # Default to this host's home dir, not a literal /root — a committed path
+    # that only works on one machine is a host leak and a portability bug.
+    paths = paths or (HOME_DIR, "/var", "/usr", "/opt")
     out = []
     for base in paths:
         try:

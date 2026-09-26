@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""ucsf_mychart_invites.py — UCSF MyChart scheduling-invite watch (read-only).
+"""ucsf_mychart_invites.py — MyChart-style scheduling-invite watch (read-only).
 
 WHY THIS EXISTS
-  UCSF MyChart "New Invitation to Schedule an Appointment" notices arrive from
+  Patient-portal "New Invitation to Schedule an Appointment" notices arrive from
   a DO-NOT-REPLY address. There is nothing to reply to — they are pure
   notifications. Booking happens in MyChart (web/app) or by phone. Any
   briefing or task that describes them as "needs a reply" is wrong, and an
@@ -15,7 +15,8 @@ WHY THIS EXISTS
   This script answers the three questions that are answerable from the API:
     1. Are there outstanding invites, and are they still visible (INBOX) or
        already dismissed (archived / no INBOX label)?
-    2. Is a filter auto-archiving UCSF mail (i.e. is the miss not Jared's)?
+    2. Is a filter auto-archiving the portal's mail (i.e. is the miss not the
+       operator's)?
     3. Did the invite convert into a booked appointment (Confirmation mail or
        a calendar event)?
 
@@ -25,7 +26,7 @@ WHY THIS EXISTS
 USAGE
   python3 ucsf_mychart_invites.py [--acct <email>] [--json] [--days 30]
 
-  Default account is Jared's. Credentials are read from
+  The account defaults to $OCAS_OPERATOR_EMAIL. Credentials are read from
   ~/.google_workspace_mcp/credentials/<acct>.json and the token self-refreshes.
 
   GOTCHA (do not use Credentials.from_authorized_user_file here): it raises
@@ -36,26 +37,53 @@ USAGE
 import argparse
 import base64
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
-try:
-    from google.oauth2.credentials import Credentials
-    from googleapiclient.discovery import build
-except ImportError as e:  # pragma: no cover
-    print(f"FATAL: missing google-api-python-client / google-auth: {e}")
-    sys.exit(1)
+# The Google client libs are OPTIONAL at import time so `--help` works in a clean
+# CI env with no third-party packages installed (same convention as
+# gws_direct_puller.py and verify_sepagree_signature.py). Resolved on first
+# real use; missing libs are a hard error only when actually run.
+Credentials = None
+build = None
 
-CRED_DIR = Path("/root/.google_workspace_mcp/credentials")
-NOTIFY = "donotreplyucsfmychart@ucsf.edu"
-BILLING = "donotreplyucsf@ucsf.edu"
+
+def _require_google():
+    """Import the Google client libs, or exit 3 with a clear message."""
+    global Credentials, build
+    if Credentials is not None:
+        return
+    try:
+        from google.oauth2.credentials import Credentials as _Credentials
+        from googleapiclient.discovery import build as _build
+    except ImportError as e:  # pragma: no cover
+        print(f"FATAL: missing google-api-python-client / google-auth: {e}",
+              file=sys.stderr)
+        sys.exit(3)
+    Credentials, build = _Credentials, _build
+
+CRED_DIR = Path(os.path.expanduser(
+    os.environ.get("OCAS_GOOGLE_CRED_DIR", "~/.google_workspace_mcp/credentials")))
+
+# The health system's own notification addresses. These are a THIRD PARTY's
+# service endpoints, not a person, but they are still account-specific, so they
+# come from the environment rather than being committed as literals. Point
+# these at your provider's real senders.
+NOTIFY = os.environ.get("CARE_NOTIFY_ADDR", "donotreply+mychart@example.com")
+BILLING = os.environ.get("CARE_BILLING_ADDR", "donotreply+billing@example.com")
 INVITE_SUBJ = "New Invitation to Schedule an Appointment"
 FOLLOWUP = "Follow-up|follow up|Follow Up"
 
 # Cues that identify an outstanding-care thread in a calendar summary.
+# Generic specialty/word cues only. Do NOT add a clinician's or patient's
+# surname here: a real name in this regex leaks the fact of a specific
+# appointment to anyone who reads the repo. Add your own provider's specialty
+# words, or extend it with $CARE_CUES_EXTRA at runtime.
 CARE_CUES = re.compile(
-    r"ucsf|bayfront|ortho|podiatr|foot|ankle|saxena|mychart|schoenbeck", re.I
+    r"mychart|appointment|clinic|ortho|podiatr|foot|ankle|physical ?therapy"
+    r"|" + os.environ.get("CARE_CUES_EXTRA", ""), re.I
 )
 
 
@@ -91,16 +119,24 @@ def visibility(labels):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--acct", default="jared.zimmerman@gmail.com")
+    ap.add_argument("--acct", default=os.environ.get("OCAS_OPERATOR_EMAIL", ""),
+                    help="mailbox address whose token file is read (default: "
+                         "$OCAS_OPERATOR_EMAIL, e.g. you@example.com)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--days", type=int, default=30)
     args = ap.parse_args()
+
+    if not args.acct:
+        print("FATAL: pass --acct <email> or set $OCAS_OPERATOR_EMAIL",
+              file=sys.stderr)
+        return 2
+    _require_google()
 
     creds = load_creds(args.acct)
     gmail = build("gmail", "v1", credentials=creds, cache_discovery=False)
     cal = build("calendar", "v3", credentials=creds, cache_discovery=False)
     out = {"account": args.acct, "invites": [], "confirmations": [],
-           "ucsf_filter": None, "booked_care_events": [], "notes": []}
+           "portal_filter": None, "booked_care_events": [], "notes": []}
 
     # 1. Outstanding invites, newest first.
     q = f"from:{NOTIFY} subject:\"{INVITE_SUBJ}\" newer_than:{args.days}d"
@@ -131,17 +167,18 @@ def main():
             "provider": prov.group(1) if prov else None,
         })
 
-    # 3. Is a filter auto-archiving UCSF mail? Distinguishes "Jared missed it"
-    #    from "the mailbox hid it" — the two demand different responses.
+    # 3. Is a filter auto-archiving the portal's mail? Distinguishes "the
+    #    operator missed it" from "the mailbox hid it" — the two demand
+    #    different responses.
     try:
         filters = gmail.users().settings().filters().list(userId="me").execute().get("filter", [])
         for f in filters:
-            if "ucsf" in json.dumps(f).lower():
-                out["ucsf_filter"] = f
+            if NOTIFY.split("@")[-1].lower() in json.dumps(f).lower():
+                out["portal_filter"] = f
                 break
-        if out["ucsf_filter"] is None:
+        if out["portal_filter"] is None:
             out["notes"].append(
-                "No Gmail filter references ucsf — archived invites were "
+                "No Gmail filter references the portal sender — archived invites were "
                 "dismissed in a client, not auto-archived by a rule.")
     except Exception as e:  # settings scope may be absent
         out["notes"].append(f"filter check unavailable: {e}")
@@ -173,7 +210,7 @@ def main():
         print(json.dumps(out, indent=2))
         return 0
 
-    print(f"UCSF MyChart invite watch — {args.acct} (last {args.days}d)\n")
+    print(f"Patient-portal invite watch — {args.acct} (last {args.days}d)\n")
     if not out["invites"]:
         print("  Outstanding invites: NONE")
     for i in out["invites"]:
