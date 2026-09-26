@@ -36,6 +36,7 @@ USAGE
 """
 import argparse
 import base64
+import html
 import json
 import os
 import re
@@ -74,17 +75,45 @@ CRED_DIR = Path(os.path.expanduser(
 NOTIFY = os.environ.get("CARE_NOTIFY_ADDR", "donotreply+mychart@example.com")
 BILLING = os.environ.get("CARE_BILLING_ADDR", "donotreply+billing@example.com")
 INVITE_SUBJ = "New Invitation to Schedule an Appointment"
+SUMMARY_SUBJ = "New After Visit Summary Available"
 FOLLOWUP = "Follow-up|follow up|Follow Up"
+
+# The example.com defaults are PLACEHOLDERS. A run that leaves them in place
+# queries a domain that cannot exist, matches nothing, and prints a confident
+# "Outstanding invites: NONE" with EXIT 0. main() refuses to run in that state.
+UNCONFIGURED_MARKER = "example.com"
+
+
+def _cue_pattern():
+    """Join only NON-EMPTY cue sources into one alternation.
+
+    GOTCHA (finch:work #199, 2026-09-26): appending an empty $CARE_CUES_EXTRA
+    left a TRAILING `|` in the compiled pattern. A trailing `|` is an EMPTY
+    ALTERNATIVE, and an empty alternative matches every string — so
+    `booked_care_events` listed EVERY calendar event in the window and reported
+    it as booked care, with a plausible-looking count and EXIT 0. Verified live:
+    "Tokyo Tea Room, Beach Vacation" and "Patrick Leahy's birthday" both matched
+    on the empty branch. Never concatenate a possibly-empty alternation.
+    """
+    words = ["mychart", "appointment", "clinic", "ankle", "physical ?therapy"]
+    # STEMS are cues that legitimately continue ("podiatr" -> podiatry,
+    # "ortho" -> orthopedic). Anchor them on the LEFT only: \b alone would
+    # refuse "Podiatry" and silently drop real specialty events, and a bare
+    # unanchored form would match inside unrelated words ("twofoot").
+    stems = ["ortho", "podiatr", "foot"]
+    alt = [r"\b%s\b" % w for w in words] + [r"\b%s" % s for s in stems]
+    extra = os.environ.get("CARE_CUES_EXTRA", "").strip()
+    if extra:
+        alt.append(extra)
+    return "|".join(alt)
+
 
 # Cues that identify an outstanding-care thread in a calendar summary.
 # Generic specialty/word cues only. Do NOT add a clinician's or patient's
 # surname here: a real name in this regex leaks the fact of a specific
 # appointment to anyone who reads the repo. Add your own provider's specialty
 # words, or extend it with $CARE_CUES_EXTRA at runtime.
-CARE_CUES = re.compile(
-    r"mychart|appointment|clinic|ortho|podiatr|foot|ankle|physical ?therapy"
-    r"|" + os.environ.get("CARE_CUES_EXTRA", ""), re.I
-)
+CARE_CUES = re.compile(_cue_pattern(), re.I)
 
 
 def load_creds(acct):
@@ -104,9 +133,35 @@ def headers(msg):
 
 
 def body_text(part):
-    if part.get("body", {}).get("data"):
-        return base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8", "replace")
-    return "\n".join(body_text(p) for p in (part.get("parts") or []))
+    """Concatenate the decodable TEXT parts.
+
+    GOTCHA (finch:work #199, 2026-09-26): this harvested only text/plain, so
+    the HTML-only notices this watcher exists to read decoded to ''. A caller
+    doing a content search then saw "names no clinic" — a vacuous result
+    presented as evidence. Handle text/html too (tags stripped, entities
+    unescaped) and never return '' without saying which parts were present.
+    """
+    chunks = []
+
+    def walk(p):
+        mt = p.get("mimeType", "")
+        data = (p.get("body") or {}).get("data")
+        if data:
+            try:
+                raw = base64.urlsafe_b64decode(data).decode("utf-8", "replace")
+            except Exception:
+                raw = ""
+            if mt == "text/plain":
+                chunks.append(raw)
+            elif mt == "text/html":
+                raw = re.sub(r"(?is)<(script|style).*?</\1>", " ", raw)
+                raw = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</tr>|</h\d>", "\n", raw)
+                chunks.append(html.unescape(re.sub(r"<[^>]+>", " ", raw)))
+        for c in p.get("parts") or []:
+            walk(c)
+
+    walk(part)
+    return re.sub(r"\n\s*\n\s*\n+", "\n\n", re.sub(r"[ \t\xa0]+", " ", "\n".join(chunks))).strip()
 
 
 def visibility(labels):
@@ -130,12 +185,25 @@ def main():
         print("FATAL: pass --acct <email> or set $OCAS_OPERATOR_EMAIL",
               file=sys.stderr)
         return 2
+    # Fail loud on the placeholder defaults. A run that keeps them queries
+    # example.com, matches nothing, and reports an empty mailbox with EXIT 0 --
+    # indistinguishable from a genuinely clean portal. That is the false-clean
+    # failure mode, so it is a non-zero exit, not a footnote.
+    # (finch:work #199, 2026-09-26: verified -- the default invocation returned
+    # "Outstanding invites: NONE" and 4 bogus care events while 2 real invites
+    # were open and 1 real confirmation existed.)
+    if UNCONFIGURED_MARKER in NOTIFY.lower():
+        print("FATAL: the portal sender is still the example.com placeholder. Set "
+              "$CARE_NOTIFY_ADDR (and $CARE_BILLING_ADDR) to the real senders, or "
+              "pass the correct addresses, then re-run. Refusing to report a "
+              "possibly-empty mailbox.", file=sys.stderr)
+        return 4
     _require_google()
 
     creds = load_creds(args.acct)
     gmail = build("gmail", "v1", credentials=creds, cache_discovery=False)
     cal = build("calendar", "v3", credentials=creds, cache_discovery=False)
-    out = {"account": args.acct, "invites": [], "confirmations": [],
+    out = {"account": args.acct, "invites": [], "summaries": [], "confirmations": [],
            "portal_filter": None, "booked_care_events": [], "notes": []}
 
     # 1. Outstanding invites, newest first.
@@ -150,22 +218,65 @@ def main():
             "labels": m["labelIds"], "visibility": visibility(m["labelIds"]),
         })
 
+    # 1b. After-visit summaries. Same portal, different notice class: these
+    # announce that a visit summary is READY in MyChart. They are unread for a
+    # reason unrelated to scheduling, so they are counted separately -- a
+    # "portal is clear" verdict that silently folds them into the invite count
+    # understates what Jared has not yet read.
+    q = f"from:{NOTIFY} subject:\"{SUMMARY_SUBJ}\" newer_than:{args.days}d"
+    for item in gmail.users().messages().list(
+            userId="me", q=q, maxResults=25).execute().get("messages", []):
+        m = gmail.users().messages().get(userId="me", id=item["id"], format="full").execute()
+        out["summaries"].append({
+            "id": m["id"], "date": headers(m).get("Date"),
+            "labels": m["labelIds"], "visibility": visibility(m["labelIds"]),
+            "body_chars": len(body_text(m["payload"])),
+        })
+    n_unread_sum = sum(1 for s in out["summaries"]
+                      if s["visibility"] in ("inbox", "unread-archived"))
+    if n_unread_sum:
+        out["notes"].append(
+            f"{n_unread_sum} After Visit Summary notice(s) not yet cleared by the "
+            "operator. The summary CONTENT lives only in MyChart -- the notice body "
+            "names no clinic, specialty, or provider.")
+
     # 2. Did any invite convert into a booked appointment?
     q = f'from:{NOTIFY} subject:"Appointment Confirmation" newer_than:{args.days}d'
     for item in gmail.users().messages().list(
             userId="me", q=q, maxResults=15).execute().get("messages", []):
         m = gmail.users().messages().get(userId="me", id=item["id"], format="full").execute()
-        txt = body_text(m["payload"])
-        flat = re.sub(r"\s+", " ", txt)
-        date = re.search(r"Date:\s*<strong>([^<]+)", flat)
-        time = re.search(r"Time:\s*<strong>([^<]+)", flat)
-        prov = re.search(r"Provider:\s*<strong>([^<]+)", flat)
+        flat = re.sub(r"\s+", " ", body_text(m["payload"]))
+
+        def field(name):
+            """Read 'Name: value' from the flattened body.
+
+            The <strong>-anchored pattern this replaces depended on raw HTML
+            surviving body_text(); now that tags are stripped it would return
+            None on every confirmation while still exiting 0 -- a null field
+            read as 'no provider named'. Match the label, then take up to the
+            next capitalised label.
+            """
+            if name == "Location":
+                # An address is bounded by its ZIP; the notice continues with
+                # cancel/reschedule boilerplate that no label delimits. Without
+                # this the field reads "... CA 94158 If you wish to cancel..."
+                z = re.search(r"Location:\s*(.+?\b\d{5})(?!\d)", flat)
+                if z:
+                    return z.group(1).strip()
+            m2 = re.search(rf"{name}:\s*(.+?)(?=\s+[A-Z][A-Za-z]+:|\s*$)", flat)
+            return m2.group(1).strip() if m2 else None
+
         out["confirmations"].append({
             "date": headers(m).get("Date"),
-            "when": date.group(1) if date else None,
-            "time": time.group(1) if time else None,
-            "provider": prov.group(1) if prov else None,
+            "when": field("Date"),
+            "time": field("Time"),
+            "provider": field("Provider"),
+            "location": field("Location"),
         })
+    if out["confirmations"] and not any(c["provider"] for c in out["confirmations"]):
+        out["notes"].append(
+            "A confirmation was found but no Provider field parsed -- the body "
+            "layout changed, so do NOT read the null fields as 'no provider named'.")
 
     # 3. Is a filter auto-archiving the portal's mail? Distinguishes "the
     #    operator missed it" from "the mailbox hid it" — the two demand
@@ -218,6 +329,13 @@ def main():
     n_arch = sum(1 for i in out["invites"] if i["visibility"] != "inbox")
     if n_arch and len(out["invites"]) == n_arch:
         print("  -> ALL outstanding invites are no longer in the inbox.")
+    for s in out["summaries"]:
+        print(f"  SUMMARY {s['date'][:31]:31s} [{s['visibility']:16s}] {s['id']}")
+    if out["summaries"]:
+        n_unread = sum(1 for s in out["summaries"]
+                       if s["visibility"] in ("inbox", "unread-archived"))
+        print(f"  -> {n_unread} of {len(out['summaries'])} after-visit summaries "
+              "not yet cleared.")
     if out["confirmations"]:
         print("\n  Booked (Appointment Confirmation):")
         for c in out["confirmations"]:
