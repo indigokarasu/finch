@@ -24,6 +24,53 @@ line ~125 (which `open(..., "w")` and rewrites the ENTIRE file) proceed and
   It must fail loud so the upstream reseed (the real recovery) can run. Do NOT
   patch the open() to swallow the error. Fix the absence (reseed), not the guard.
 
+## 3. The fix's RATIONALE is a config comparison, not a measurement
+
+Two conditions make a prescribed fix wrong when the job is NOT self-recovered. The first two sections
+cover "the error is stale". This one covers "the diagnosis is right and the remedy is still wrong".
+
+**Symptom:** the task argues from a *setting mismatch* — "8 workers against a 2-thread server", "6
+retries against a 30s budget", "N parallel calls against a timeout of T" — and lands on a knob to
+turn. A mismatch is a hypothesis. It is not evidence that turning the knob changes the outcome.
+
+**Procedure:**
+1. Identify the quantity the fix is supposed to move, and its actual budget. For a network client that
+   is the per-request timeout, not the concurrency.
+2. Measure the real path, not a reconstruction of it. Import the production class and call it. A
+   hand-rolled HTTP probe **bypasses the production code's own guards** — the `max_input_tokens` clamp
+   (2048 tokens -> 6144 chars) in the Chronicle embedder is the concrete case: a probe that POSTs
+   arbitrary text will happily reproduce timeouts that the real worker can never emit, which makes an
+   unrelated hypothesis look confirmed.
+3. Measure the CURRENT config and the PROPOSED config in the same pass, same process, so the numbers
+   are comparable. Report success rate AND throughput; a fix that raises the success rate while
+   halving throughput is a trade, and the trade belongs to the operator.
+4. Test at least one alternative the task did not consider. The cheapest dimension is often the one
+   nobody measured.
+5. If the prescription is refuted, say so in the record and do NOT carry it forward for approval as
+   if it were sound. Sending a wrong fix to the operator for a yes/no is worse than sending none: it
+   spends their attention and gets a change that will not work.
+
+**Confirmed 2026-09-26 finch:work (#180, `cron-chronicle-embedding-script-error`):** the task
+prescribed `ENRICH_WORKERS 8->2` because the script's default fan-out exceeded the embedder's
+`-t 2` thread count. Measured through the real `OpenAICompatEmbedder` at a typical 1806-char blob:
+n=2 costs 4.27-4.86s of the 10.0s default timeout (2x margin, not comfortable) and roughly halves
+throughput, while n=8 at a *raised* client timeout of 30-45s completes 8/8 at 0.44 emb/s - both safer
+and faster than the prescription. The fix direction was the client timeout, not the worker count.
+
+## 4. The loss is an amplifier, not N independent failures
+
+Before characterising a failure by its count, find the ratio between the *real* errors and the
+*reported* ones. A circuit breaker, retry budget, or fail-fast guard turns one error into thousands
+of reported ones: the same run held 1 real timeout and 4,230 `is presumed down` lines (a ~1:4230
+amplification, with cooldown escalating 30->60->120->240->480->600s so recovery inside a 540s budget
+is impossible).
+
+`count("failed")` in a log is not `count("broken")`. Report both, and let the ratio name the
+mechanism. The shape also inverts the fix: making the first error less likely barely moves the total,
+whereas preventing the first error from *propagating* (widen the budget, stop the cascade) moves it
+all at once. When a task's own watcher conflates the two, fix the watcher - that conflation is what
+kept the wrong diagnosis alive across passes.
+
 ## Decision procedure for any finch:work "fix the missing artifact" task
 1. Read the job's run history; identify the failing run AND any later run.
 2. If a later run = ok AND the artifact now exists with a matching mtime →
