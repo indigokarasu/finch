@@ -108,6 +108,9 @@ Full bodies: `references/scanning-gotchas.md` (MCP/Gmail/cron-JSON) and `referen
 
 - **Probe MCP tools ALONE before batching** — one bad tool name poisons the whole batch; MCP load state flips between runs (`tool_search` ≠ `tool_call`).
 - **Cron health only from `jobs.json`** — `hermes cron list` hides disabled/paused jobs and has no JSON mode; `consecutive_failures > 0` is the only reliable "broken now" gate; pin the LIVE path (never `state-snapshots/`).
+- **`paused: true` is INERT on its own** — the gate is `cron/jobs.py:_has_pause_marker` (`state=='paused'` or `paused_at` non-null); the bare boolean is never read. Classify a job's real state on `paused` **OR** `enabled is false`, and import `is_job_runnable` rather than reimplementing the gate. Check with `scripts/pause_gate_watch.py`. Setting the boolean alone pauses nothing (this is how the 2026-09-17 load mitigation failed).
+- **Diff registry snapshots OLDEST → NEWEST** — walking them newest→oldest while printing `prev→cur` as "removals" inverts the labels and will report a job as removed from a snapshot that contains it. If a removal set looks surprising, print an explicit containment map (present/absent per ordered state) before drawing any conclusion.
+- **Test a `re_verify_trigger` against the FULL history, not just the edit it was written for** — `cron-bones-paused-error-cluster` clause 1 was checked only against the bones edit, so it read "nothing fires this" for 3 passes; walking the whole registry found a different, earlier removal it does match.
 - **Never report "0 errors" from a summary or a prior scan** — derive it from a full-output grep of the live registry; verify recoveries against `last_run_at`.
 - **Email scan loops `page_token` to completion** — page-1-only misses high-value mail; classify metadata-first (`email-mcp-pagination-parsing.md`, `email-mcp-triage.md`).
 - **Workspace MCP absent → pivot at once** to `scripts/gws_direct_puller.py` (googleapiclient; raw requests 404 through the host egress filter); record the source UNVERIFIED, never "no signal".
@@ -191,6 +194,7 @@ After every session, review for signals and update the skill library — procedu
 | `verify_sepagree_signature.py` | Docusign EMAIL-SEPAGREE "unsigned" re-verifier; prints VERDICT | `--since <RFC3339>` probe |
 | `finch_hooks_plugin.py` | Hooks: signal capture, memory guard, subagent tracking | `--extract-signals`, `--check-tool` |
 | `finch_scan_tasklist_rerank.py` | Safe re-rank + validation for task-list.json | (positional path) |
+| `pause_gate_watch.py` | Claim-vs-enforcement check for the `paused` boolean (inert vs real markers) | `--json`, `--quiet`, `--tolerance N`; EXIT 0 ok / 1 unreadable / 2 drift |
 | `check_no_pii.py` | PII gate CI runs before publish | `--quiet` |
 
 Verify-script rules (canonical copy only; never hand-roll a sibling) → `references/sepagree-verify-rules.md`. Eviction priority + memory_state detail → `references/operational-gotchas.md` § Scripts.
