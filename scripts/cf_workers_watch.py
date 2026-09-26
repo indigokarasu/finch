@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-cf_workers_watch.py — read-only Cloudflare Workers usage watcher for Jared's account
-(account 794136ed98a842c530366a3858dbc71a, daily limit 100,000 requests, resets 00:00 UTC).
+cf_workers_watch.py — read-only Cloudflare Workers usage watcher for one
+account (pass the account id with --account, or $CF_ACCOUNT_ID; the free-plan
+daily limit is 100,000 requests, resetting 00:00 UTC).
 
 WHY THIS EXISTS (finch:work #170, 2026-09-26): task
 system-cloudflare-workers-limit-recurring had been re-derived from scratch on every
@@ -20,14 +21,16 @@ decide the disposition:
 Run:  <workspace-mcp-venv>/bin/python cf_workers_watch.py
 Exit: 0 always (read-only). Prints JSON. Never sends, spends, or mutates anything.
 """
+import argparse
 import json, os, re, base64, sys
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 
+CF_ACCOUNT = os.environ.get("CF_ACCOUNT_ID", "")
 CREDS = os.environ.get("OCAS_GOOGLE_CRED_DIR", "~/.google_workspace_mcp/credentials")
 CREDS = os.path.join(
     os.path.expanduser(CREDS),
-    "<operator-email>.json")
+    f"{os.environ.get('OCAS_OPERATOR_EMAIL', '')}.json")
 DAILY_LIMIT = 100_000
 RECENT_WINDOW_DAYS = 45
 # Verdicts the email stream actually supports, in priority order.
@@ -57,7 +60,15 @@ def creds():
 
 
 def main():
+    # Parse flags BEFORE importing the optional Google client libs, so --help
+    # works in a clean CI env (same convention as gws_direct_puller.py).
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[2].strip())
+    ap.add_argument("--account", default=CF_ACCOUNT,
+                    help="Cloudflare account id (default: $CF_ACCOUNT_ID)")
+    ap.parse_args()
+
     from googleapiclient.discovery import build
+
     svc = build("gmail", "v1", credentials=creds(), cache_discovery=False)
 
     ids = set()

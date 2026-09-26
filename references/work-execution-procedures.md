@@ -59,10 +59,10 @@ For email tasks in a "waiting on a reply" state ("monitor for response", "may ne
 
 **A draft can propagate a FALSE PREMISE across many scans — the misreport compounds, so check it every time.** Confirmed twice more, 2026-09-26:
 
-- HOOBS ticket #6361: three prior scans recorded "Jared threatened chargeback if no resolution by EOD Friday" as a fact the vendor was defying. The threat was `labelIds=[DRAFT]` only. Because the note asserted it, each later scan re-copied the assertion and added a *reasoning* layer on top ("the deadline passed with the vendor never acknowledging resolution" — implying the vendor ignored an ultimatum). The real state was an unopened draft and a vendor that never saw it. Scan-after-scan compounding turns one label error into a coherent but false story.
-- Lumina (#154) had the same shape at smaller scale: a reply read as `SENT` from draft content.
+- A vendor refund ticket: three prior scans recorded "the operator threatened a chargeback if there was no resolution by EOD Friday" as a fact the vendor was defying. The threat was `labelIds=[DRAFT]` only. Because the note asserted it, each later scan re-copied the assertion and added a *reasoning* layer on top ("the deadline passed with the vendor never acknowledging resolution" — implying the vendor ignored an ultimatum). The real state was an unopened draft and a vendor that never saw it. Scan-after-scan compounding turns one label error into a coherent but false story.
+- A hiring thread had the same shape at smaller scale: a reply read as `SENT` from draft content.
 
-Rule: when a task's *conclusion* depends on someone having received or sent something, `labelIds` on the specific message is load-bearing — never inherit the assertion from the note. Also sanity-check the *scale* of a complaint: the HOOBS note said "3 days past the 09-23 reply" while the thread's first refund ask was 2024-11-10 (684 days). Scans see a 2-day mail window; the underlying dispute is often far older. Pull the full thread or all-time sweep before characterizing a dispute as recent, and before naming a deadline as the decisive one.
+Rule: when a task's *conclusion* depends on someone having received or sent something, `labelIds` on the specific message is load-bearing — never inherit the assertion from the note. Also sanity-check the *scale* of a complaint: that note said "3 days past the reply" while the thread's first ask was nearly two years earlier. Scans see a 2-day mail window; the underlying dispute is often far older. Pull the full thread or all-time sweep before characterizing a dispute as recent, and before naming a deadline as the decisive one.
 
 #### Notification-sender triage (do-not-reply mail)
 
