@@ -47,10 +47,18 @@ import argparse
 import datetime
 import importlib
 import json
+import os
 import sys
+from pathlib import Path
 
-JOBS = "/root/.hermes/cron/jobs.json"
-SCHEDULER_PKG = "/root/.hermes/hermes-agent"
+# Where this Hermes install lives. Resolved from the environment, never
+# committed as a literal absolute path: this script ships in a PUBLIC repo and
+# a host-specific path is both a leak and useless on another machine (see
+# references/reference-file-workflow.md). Set HERMES_ROOT to point at a
+# non-default install root; otherwise fall back to ~/.hermes.
+HERMES_ROOT = Path(os.path.expanduser(os.environ.get("HERMES_ROOT", "~/.hermes")))
+JOBS = str(HERMES_ROOT / "cron" / "jobs.json")
+SCHEDULER_PKG = str(HERMES_ROOT / "hermes-agent")
 # Baseline recorded 2026-09-26 by finch:work #178. finch:work #175 first
 # observed the gap; #178 re-derived it against the real gate and pinned it here.
 # Refresh BASELINE whenever a registry edit is made deliberately, so the
