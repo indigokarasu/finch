@@ -74,6 +74,30 @@ MEMORY_FILE = PROFILE_HOME / "MEMORY.md"
 ### Two evals.json files must be kept in sync
 There are two `evals.json` files: `evals.json` (root) and `evals/evals.json` (subdirectory). Both must be updated when adding/removing test cases. The root one is the canonical reference.
 
+### The df-vs-du gap: deleted-but-open file holders (work execution)
+`df` counts blocks held by deleted-but-open files; `du` cannot see them. A test suite that copies a large SQLite DB, deletes the copy, and keeps the fds holds hundreds of MB to GB that vanish from every `du` walk — and a `df` sample taken during that window reads as unexplained disk growth.
+
+**Observed 2026-09-26 (`system-disk-rising`, finch:work #165):** three separate holders in one 15-minute window — 908 MB across 120,655 deleted fds, a `unittest discover` process at 1.3 GB / 56,487 fds, then `run_suite.py` climbing 831 MB → 1,883 MB. All were bounded runs (`timeout 590` / unittest) that self-released. This mechanism explains apparent `df` oscillation between scans and at least one growth-history false alarm (79% → 84% reported as "the disk fix didn't hold") that was really transient test-suite I/O.
+
+**Procedure:**
+1. When `df` used exceeds the sum of `du -x` on every mount point, suspect deleted-open holders before concluding a leak.
+2. Find them without `lsof` (a shell loop over `/proc/*/fd` trips the Tirith nested-executable guard in cron): walk `/proc/[0-9]*/fd`, `readlink` each fd, count targets containing `(deleted)`, and `os.stat` for size. Group by pid, report MB + fd count + cmdline.
+3. **Check whether the holder is a live bounded run before killing anything.** Compare `etimes` against the process's own timeout wrapper. A suite still inside its `timeout 590` window self-releases; killing it is a false-positive intervention that also destroys the run's results.
+4. Don't take two `df` samples minutes apart and extrapolate to 24 h — see the growth-rate trap below.
+
+`scripts/finch_disk_watch.py` automates all of the above (gate inputs + gap attribution); run it before re-deriving disk analysis by hand.
+
+### Growth-rate traps when gating on "X GB/24h" (work execution)
+Two failure modes, both observed 2026-09-26 while building `finch_disk_watch.py`:
+
+1. **Near-zero baseline amplifies noise into a false trigger.** Extrapolating a rate from a baseline 0.01 h old turned an ordinary 0.7 GB wobble into "+87911 MB/24h → TRIGGER MET". Two samples seconds apart differ by whatever unrelated I/O happened in between; dividing by ~0 h manufactures an absurd rate. Guard with a minimum interval (the script uses `MIN_BASELINE_AGE_H = 1.0`) and report growth as **unknown** below it — never guess a rate.
+2. **A `/24h` trigger is a normalised RATE, not a raw total.** +2.6 G observed over a 6 h sample normalises to +10.4 G/24h and trips a 5 G/24h gate even though only 2.6 G of real growth happened. Report both: the normalised rate (what the gate tests) and the raw observed delta (what actually happened), or the reader will act on a rate that never materialised.
+
+Corollary for destructive gates: a growth trigger firing on a short sample is a reason to **re-measure over a real interval**, not to start deleting. Confirm against a baseline at least `MIN_BASELINE_AGE_H` old before any tier-1/2 cleanup.
+
+### Separating real DB growth from free-list bloat
+A growing SQLite file is not necessarily growing *data*. Read the free list directly (read-only, so a live DB is safe): `PRAGMA page_size` / `page_count` / `freelist_count` against `file:...?mode=ro`. Free-list pages are reclaimable by VACUUM; `size - free` is the real payload. Confirmed 2026-09-26: `chronicle.db` at 2,404 MB with 0 MB free-list (genuine data growth) vs `state.db` at 1,505 MB with 564 MB free-list (37.5% reclaimable). Attributing "disk is growing" without this split mis-sends the fix — data growth needs retention work, bloat needs VACUUM.
+
 ## Scripts (verbose detail)
 
 ### memory_guard.py eviction priority — Methodologies outrank Course Changes
