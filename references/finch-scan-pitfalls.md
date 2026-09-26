@@ -155,3 +155,70 @@ content/timestamp duplicates appearing across several session ids are replay
 artifacts, not new activity. Determine "latest real activity" from max timestamp
 per session (plus rowid ordering), and treat only messages newer than the newest
 non-replay row as fresh signal.
+
+Before recording any tool as absent, PROVE it the way the deferred-tools task
+requires — `tool_search` for the capability, then `tool_describe` on the exact
+name. A failed keyword search alone is not evidence of absence; only a
+`not_found` from `tool_describe` is. "Deferred" and "genuinely absent" are
+different findings and must never be conflated in a scan note.
+
+## 10. Gmail draft headers are LOWERCASE — a case-sensitive read fakes "header-less"
+`users.messages.get(format=full)` returns DRAFT headers with lowercase names
+(`from`, `subject`, `to`), while `format=metadata` returns capitalized
+`From`/`Subject`/`To`. A reader doing `hdr["Subject"]` gets ABSENT and concludes
+the draft is header-less/orphaned. This has already produced two opposite
+verdicts about the same four PR drafts in the ledger (#165 "no headers";
+#166 "they carry real Subjects") — and #166's stated cause (`format=minimal`)
+was also wrong, so the real cause stayed latent.
+
+Rules:
+- ALWAYS build the dict with a lowercased key:
+  `{h["name"].lower(): h["value"] for h in payload["headers"]}`.
+- Cross-check `len(body["data"]) > 0`. A non-empty body paired with "absent"
+  headers is the signature of THIS ARTEFACT, never of an orphan. That
+  disagreement is what catches it.
+- Only after a lowercased read still finds no header may you record an orphan.
+
+## 11. Verify the ledger's own timestamps against its mtime — future stamps are a false-completion variant
+`task-list.json` `as_of` / `last_scan_at` / `updated_at` may be stamped from a
+PLANNED cycle time instead of write time, yielding values later than the file's
+own mtime. Observed: a scan wrote as_of 40-52 min in the future while its own
+mtime and the wall clock were both earlier. That silently corrupts scan ordering
+and every "last reviewed" claim built on it.
+
+**CONFIRMED ROOT CAUSE (finch:work #189, 2026-09-26): the forward stamp was the
+scheduler's `next_run_at`, not a clock slip.** A ledger written at 17:39:03Z
+carried `as_of=18:30:00Z`; `finch:work`'s `next_run_at` in the live registry was
+`2026-09-26T11:30:00-07:00` = 18:30:00Z exactly. The scheduler publishes the next
+slot in `jobs.json`, so it is a plausible value to reach for when a pass wants
+"this cycle's" stamp. Discriminator that separates the two: a real `now()` stamp
+has non-zero seconds, a slot-derived one lands on `:00` of a 5-minute grid. The
+bug is per-run and ad-hoc — the writers are throwaway scripts, so there is no
+single choke point to patch, which is why a correction alone does not survive.
+
+**The `scan-HHMM.json` filename is not a clock and cannot be used as one.** Of
+222 journals, only 63 agree with their own mtime within 5 min, and the failures
+are not a timezone story: reading the filename as UTC and as local-local both
+score 63/220, so the whole naming convention is unreliable. The duplicate
+`scan_number` (#132 in both `scan-0608.json` and `scan-1000.json`) is the one
+coherent signal. Note the audit must be **cohort-aware**: only 48 of 222 journals
+carry an integer `scan_number` at all, so "missing scan numbers 1-152" was an
+artifact of comparing a 48-file cohort against a 168 max — the pre-field journals
+simply have no number to be missing.
+
+Rules:
+- **Run `scripts/finch_ledger_guard.py` BEFORE believing any ledger write**, and
+  `--repair` to clamp. It validates header AND per-task stamps, checks journal
+  coherence, and carries `*_measured` flags so "no violations" can be
+  distinguished from "not measured". `test_finch_ledger_guard.py` covers both
+  verdict directions — a guard that only ever passes is no guard.
+- After `json.load`, compare `as_of` against `os.path.getmtime(TL)`. `as_of >
+  mtime` is a P1 finding, not a scan note.
+- When writing, stamp from `datetime.now()` at write time — never from the
+  scheduled slot, and never read `next_run_at` out of the registry as a clock.
+- Do NOT carry a forward-stamped field forward. If no work ran, leave
+  `last_work_at` alone rather than re-stamping it.
+- Repair clamps DOWN to the file mtime, never up to `now()` — the mtime is the
+  last moment the content is known to have existed; `now()` is a second
+  fabrication.
+- Corroborate with `version`/`scan_count` being monotonic.
