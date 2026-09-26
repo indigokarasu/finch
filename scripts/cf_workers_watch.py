@@ -62,7 +62,7 @@ def creds():
 def main():
     # Parse flags BEFORE importing the optional Google client libs, so --help
     # works in a clean CI env (same convention as gws_direct_puller.py).
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[2].strip())
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[1].strip())
     ap.add_argument("--account", default=CF_ACCOUNT,
                     help="Cloudflare account id (default: $CF_ACCOUNT_ID)")
     ap.parse_args()

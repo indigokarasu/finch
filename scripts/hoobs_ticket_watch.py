@@ -55,6 +55,12 @@ TEMPLATE = re.compile(
     re.I)
 
 
+# The Google client libs are optional at import time; see _require_google().
+# Bound before the function that rebinds them, so the global is always defined.
+Credentials = None
+build = None
+
+
 def _require_google():
     """Import the Google client libs, or exit 3 with a clear message.
 
@@ -71,11 +77,6 @@ def _require_google():
               file=sys.stderr)
         sys.exit(3)
     Credentials, build = _Credentials, _build
-
-
-# The Google client libs are optional at import time; see _require_google().
-Credentials = None
-build = None
 
 
 def load():

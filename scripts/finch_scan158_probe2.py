@@ -83,6 +83,49 @@ def _body(svc, mid, maxlen=1200):
     return m, " ".join(txt.split())[:maxlen]
 
 
+def _sweep_threads(svc, threads):
+    """Print one line per message per thread. A stale id must not abort."""
+    for tid in threads:
+        print("=== THREAD %s ===" % tid)
+        try:
+            th = svc.users().threads().get(userId="me", id=tid).execute()
+        except Exception as e:
+            print("  ERR %s" % e)
+            continue
+        for m in th["messages"]:
+            h = _headers(m)
+            print("  %s %s | from=%s | subj=%s | labels=%s" % (
+                m["id"], h.get("date"), h.get("from"), h.get("subject"),
+                m.get("labelIds")))
+
+
+def _sweep_messages(svc, messages, maxlen):
+    """Print headers plus a decoded body per message id."""
+    for mid in messages:
+        print("\n=== MESSAGE %s ===" % mid)
+        try:
+            m, txt = _body(svc, mid, maxlen)
+        except Exception as e:
+            print("  ERR %s" % e)
+            continue
+        h = _headers(m)
+        print("  to=%s date=%s" % (h.get("To"), h.get("Date")))
+        print("  BODY: %s" % txt)
+
+
+def _sweep_queries(svc, queries):
+    """Run each Gmail query, then print metadata for up to 5 hits."""
+    for q in queries:
+        r = svc.users().messages().list(userId="me", q=q, maxResults=5).execute()
+        print("\n  q=%s -> %d" % (q, len(r.get("messages", []))))
+        for item in r.get("messages", []):
+            g = svc.users().messages().get(userId="me", id=item["id"],
+                                           format="metadata").execute()
+            hh = _headers(g, ("From", "Subject", "Date"))
+            print("     %s %s | %s | %s" % (item["id"], hh.get("date"),
+                                            hh.get("from"), hh.get("subject")))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--threads", default="", help="comma-separated thread ids "
@@ -113,39 +156,9 @@ def main():
 
     svc = service()
 
-    for tid in threads:
-        print("=== THREAD %s ===" % tid)
-        try:
-            th = svc.users().threads().get(userId="me", id=tid).execute()
-        except Exception as e:  # one stale id must not abort the sweep
-            print("  ERR %s" % e)
-            continue
-        for m in th["messages"]:
-            h = _headers(m)
-            print("  %s %s | from=%s | subj=%s | labels=%s" % (
-                m["id"], h.get("date"), h.get("from"), h.get("subject"),
-                m.get("labelIds")))
-
-    for mid in messages:
-        print("\n=== MESSAGE %s ===" % mid)
-        try:
-            m, txt = _body(svc, mid, args.maxlen)
-        except Exception as e:
-            print("  ERR %s" % e)
-            continue
-        h = _headers(m)
-        print("  to=%s date=%s" % (h.get("To"), h.get("Date")))
-        print("  BODY: %s" % txt)
-
-    for q in queries:
-        r = svc.users().messages().list(userId="me", q=q, maxResults=5).execute()
-        print("\n  q=%s -> %d" % (q, len(r.get("messages", []))))
-        for item in r.get("messages", []):
-            g = svc.users().messages().get(userId="me", id=item["id"],
-                                           format="metadata").execute()
-            hh = _headers(g, ("From", "Subject", "Date"))
-            print("     %s %s | %s | %s" % (item["id"], hh.get("date"),
-                                            hh.get("from"), hh.get("subject")))
+    _sweep_threads(svc, threads)
+    _sweep_messages(svc, messages, args.maxlen)
+    _sweep_queries(svc, queries)
     return 0
 
 

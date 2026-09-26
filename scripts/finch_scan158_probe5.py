@@ -90,7 +90,8 @@ def main():
             hh = {x["name"].lower(): x["value"]
                   for x in g["payload"].get("headers", [])}
             dt = datetime.datetime.fromtimestamp(
-                int(g["internalDate"]) / 1000, datetime.UTC).strftime("%m-%d %H:%MZ")
+                int(g["internalDate"]) / 1000,
+                datetime.timezone.utc).strftime("%m-%d %H:%MZ")
             print("   %s | %s | %s | %s | %s" % (
                 g["id"], dt, hh.get("from", "")[:40], hh.get("subject", "")[:50],
                 g.get("labelIds")))

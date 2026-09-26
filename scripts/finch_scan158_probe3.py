@@ -13,7 +13,6 @@ With nothing set it explains what it needs and exits 0. It must never need
 credentials or the network just to answer --help.
 """
 import argparse
-import datetime
 import json
 import os
 import sys

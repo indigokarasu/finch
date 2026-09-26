@@ -90,8 +90,12 @@ def main():
     svc = service()
 
     for mid in messages:
-        m = svc.users().messages().get(userId="me", id=mid,
-                                       format="metadata").execute()
+        try:
+            m = svc.users().messages().get(userId="me", id=mid,
+                                           format="metadata").execute()
+        except Exception as e:  # a stale id must not abort the whole sweep
+            print("%s\n  ERR %s" % (mid, e))
+            continue
         h = _headers(m)
         print("%s\n  labels=%s" % (mid, m.get("labelIds")))
         print("  from=%s" % h.get("From"))
