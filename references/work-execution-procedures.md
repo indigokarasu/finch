@@ -10,6 +10,7 @@ rather than on every invocation. Content is unchanged.
 | Task actionability filter (cron context) | when finch:work runs without a user present |
 | Pipeline task resumption (ledger/state-based) | when a task was interrupted mid-pipeline |
 | Correspondence-thread monitoring (email waiting-tasks) | when verifying an email thread that is awaiting a reply |
+| Notification-sender triage (do-not-reply mail) | when a task cites a portal notification as an outstanding action |
 
 ### Repeated check-and-close anti-pattern (work execution)
 
@@ -48,7 +49,33 @@ For email tasks in a "waiting on a reply" state ("monitor for response", "may ne
 
 **Timestamp hygiene:** stamp task/journal/decision times from live clock output (`date -u` / `datetime.now(timezone.utc)`) — never compute UTC mentally; mis-stamped reviews (hours in the future) distort freshness ordering and decay logic.
 
+**Draft-authoring gotchas (staging a thread-attached reply; confirmed 2026-09-26):** three distinct failures, each with a different HTTP error — check which one you actually hit before debugging the token.
+
+- **The puller's `id` is a MESSAGE id, not a thread id.** `gws_direct_puller.py` prints `messages.list` ids. Passing one straight into `users().drafts().create(body={"message": {"threadId": <that id>}})` returns HTTP 404 `Requested entity was not found`. Resolve first: `svc.users().messages().get(userId="me", id=MSG_ID, format="metadata").execute()["threadId"]`.
+- **Do NOT call `Credentials.from_authorized_user_file()` on the operator token file.** It raises `AttributeError: 'float' object has no attribute 'rstrip'` because `expiry` is persisted as a float epoch rather than an RFC3339 string. Build `Credentials(token=..., refresh_token=..., token_uri=..., client_id=..., client_secret=..., scopes=d.get("scopes"))` from the raw JSON dict — the same shape `gws_direct_puller.py::load_creds` already uses.
+- **A draft id is not a message id.** Calling `users().messages().get()` with a draft id (which carries an `r-` prefix) returns HTTP 400 `Invalid id value`. To read draft headers use `users().drafts().get(userId="me", id=<draft id>, format=...)` and read `["message"]["payload"]["headers"]`.
+
 **DRAFT vs SENT label check (mandatory before recording 'reply sent'):** A message from the user's address inside an email thread may be an UNSENT DRAFT — its content can read like a delivered reply. Check `labelIds` on the candidate message: `DRAFT` (or presence in `drafts.list()`) = never sent; `SENT` = sent. Record 'reply sent' only on `SENT`. Confirmed 2026-09-24 (BJAK thread): a work pass logged 'acceptance reply confirmed sent' from draft content; the next ground-truth check (threads.get + drafts.list + label check) found it unsent, corrected the record, and reclassified the task as user-blocked (book + send) rather than awaiting the external party.
+
+**A draft can propagate a FALSE PREMISE across many scans — the misreport compounds, so check it every time.** Confirmed twice more, 2026-09-26:
+
+- HOOBS ticket #6361: three prior scans recorded "Jared threatened chargeback if no resolution by EOD Friday" as a fact the vendor was defying. The threat was `labelIds=[DRAFT]` only. Because the note asserted it, each later scan re-copied the assertion and added a *reasoning* layer on top ("the deadline passed with the vendor never acknowledging resolution" — implying the vendor ignored an ultimatum). The real state was an unopened draft and a vendor that never saw it. Scan-after-scan compounding turns one label error into a coherent but false story.
+- Lumina (#154) had the same shape at smaller scale: a reply read as `SENT` from draft content.
+
+Rule: when a task's *conclusion* depends on someone having received or sent something, `labelIds` on the specific message is load-bearing — never inherit the assertion from the note. Also sanity-check the *scale* of a complaint: the HOOBS note said "3 days past the 09-23 reply" while the thread's first refund ask was 2024-11-10 (684 days). Scans see a 2-day mail window; the underlying dispute is often far older. Pull the full thread or all-time sweep before characterizing a dispute as recent, and before naming a deadline as the decisive one.
+
+#### Notification-sender triage (do-not-reply mail)
+
+A task citing a portal notification (healthcare, banking, scheduling) as an "outstanding action needing a reply" is usually wrong twice over. Before treating one as actionable, run all four checks — each is one API call and each can independently refute the task premise:
+
+1. **Is the sender answerable at all?** `donotreply*`, `no-reply*`, `noreply*` = no reply path exists. Booking/claiming happens in the portal (web/app) or by phone. Any brief that says such a message "needs a reply" is stating a falsehood, and an agent that composes a reply is writing into a black hole. The correct disposition is portal-only, and it is login-walled — never agent-actionable.
+2. **Is it still visible, or already dismissed?** Read `labelIds` on the message. `INBOX`/`UNREAD` = outstanding. Neither = the operator already triaged it; the task's "action required" framing is stale. A notification with no `INBOX` label is not a missed item, it is a handled one.
+3. **Did a rule hide it, or did the operator clear it?** Enumerate Gmail filters and search for the sender/domain. No matching filter + no `INBOX` label = a deliberate client-side dismissal by the operator. This distinction decides the whole disposition: "operator dismissed it" → routine, downgrade; "a filter hid it" → a real defect worth fixing.
+4. **How often does it fire, and is it ever left uncleared?** Query all history for the subject, not just the last 30 days. If every prior instance is also dismissed, the pattern is routine and the priority is misclassified. One unanswered instance is a lead; a 100%-cleared pattern is not.
+
+**If the notice body names no clinic, specialty, or reason** (typical of MyChart-style notices: "you have a new invitation to schedule"), then the request content exists ONLY inside the portal. State this limit explicitly in the work log: an email-side check can report that something is outstanding, never what it is. Inferring a plausible clinical reason from surrounding context and recording it as fact is the failure mode — mark it as an unconfirmed reading, and name the calendar/portal check that would confirm it. Pair with a calendar probe to see whether the care is already booked through another channel, which often makes the invite moot.
+
+**Disposition:** build a re-runnable read-only watcher (invite count + per-invite visibility + filter shadowing + conversion-to-confirmation + care events already on calendar), mark the task `watching` + `anti_churn` with a `re_verify_trigger` naming the specific condition that should re-open it, and hand the login-walled residual to the operator in one line. Do not mark it `done` — that re-opens on the next scan.
 
 #### Constructive progress while blocked (work execution)
 
