@@ -37,7 +37,14 @@ This applies to all finch jobs that mine sessions: finch:daily, finch:weekly, an
 When `session_search` is called without a source filter, the results are overwhelmingly cron sessions (health monitors, heartbeats, dispatcher runs). These contain **zero** user-facing behavioral signals. Interactive sessions (where corrections, directives, and preferences live) are a small fraction of total sessions.
 
 **Mining procedure — ALWAYS do this:**
-1. First call: `session_search(limit=20, sort='newest')` — identify which sessions are interactive (source=telegram/web/cli) vs cron.
+
+0. **Do this step, not step 1.** Select the interactive sessions with SQL FIRST
+   (`id NOT LIKE 'cron%' AND COALESCE(source,'') != 'cron'`), then browse only to
+   confirm. On this profile interactive sessions are ~0.3% of volume and the newest
+   one sat at browse rank 398 on 2026-09-27, so any browse-first ordering silently
+   drops the entire window. "Browse showed only cron" is the expected result, not a
+   finding, and never grounds for a "no signals" report.
+1. First call: `session_search(limit=20, sort='newest')` — identify which sessions are interactive (source=telegram/web/cli) vs cron. NOTE: the tool's hard cap is 10, not 20 — the cap binds long before the value. Sanity check only.
 2. Pull actual user messages with direct SQL, not `session_search` scroll. Use `sqlite3 ~/.hermes/profiles/<profile>/state.db` and join `sessions` to `messages`, filtering `s.source!='cron'`, `m.role='user'`, and the desired `started_at` window. Scroll mode is unreliable because message IDs are global, not session-local.
 3. Filter out context compaction, system notes, tool results, and messages shorter than 3 chars before signal extraction.
 4. Only mine cron sessions for system-health signals (job failures, errors), never for behavioral signals.
@@ -94,6 +101,23 @@ Two failure modes, both observed 2026-09-26 while building `finch_disk_watch.py`
 2. **A `/24h` trigger is a normalised RATE, not a raw total.** +2.6 G observed over a 6 h sample normalises to +10.4 G/24h and trips a 5 G/24h gate even though only 2.6 G of real growth happened. Report both: the normalised rate (what the gate tests) and the raw observed delta (what actually happened), or the reader will act on a rate that never materialised.
 
 Corollary for destructive gates: a growth trigger firing on a short sample is a reason to **re-measure over a real interval**, not to start deleting. Confirm against a baseline at least `MIN_BASELINE_AGE_H` old before any tier-1/2 cleanup.
+
+### A watcher is only an authority if it RUNS unattended
+A task's `re_verify_trigger` naming a watcher is a claim, not a fact. Before reporting one as the disposition, execute it exactly as the cron worker invokes it: `env -u` every variable it depends on. A watcher that only runs when a human remembers an env var is not a re-check mechanism — it exits 2, and the pass records "watch built" against a script that has never once run.
+
+**The value existing is not the same as the value arriving.** Diagnose the layer, not the value. A job whose `env={}` in `jobs.json` delivers NO job-scoped env to the worker, so a var present in the profile's `.env` still arrives unset. Read the job's own env block before concluding a value is missing. Confirmed 2026-09-27: `finch:work` (job `9a0b2b502470`) carries `env={}`, which made every direct-API script defaulting to `$OCAS_OPERATOR_EMAIL` unrunnable from any cron worker — `verify_sepagree_signature.py`, `hoobs_ticket_watch.py`, `cf_workers_watch.py`, `finch_kdp_watch.py`, `hoorii_verify_watch.py` and others. The fix was ONE shared resolver (`scripts/ocas_mailbox.py`), not one patch per script.
+
+**Prefer runtime discovery to env plumbing.** When the machine already maintains a pointer — the credential dir's `operator_email.json` symlink — follow it and read the account off `realpath()`. That is correct per profile and adds no PII, which hardcoding an address would. Deriving the account from the symlink's own NAME instead of following it is the original defect.
+
+**Two false-safe resolutions to pin with fixture tests** (both found by the tests, not by reading the code, and both report success while resolving nothing):
+- a DANGLING symlink — `os.path.realpath()` does NOT follow a broken link, so it returns the link path itself and you silently get the literal link name as the account
+- auto-selecting the AGENT's own mailbox — pointing a watcher at the wrong person's mail is strictly worse than exiting 2, so refuse it structurally on the local-part prefix, never on a literal address
+
+Also: a plain (non-link) file named `operator_email.json` must NOT resolve — that name is an alias, not an account, and returning it makes the caller build `<name>.json.json`.
+
+**Run `check_no_pii.py` on files you AUTHOR, not only ones you inherit.** It catches a real address in your own docstring or test fixture; the fix is genericisation, never suppression or an exclusion entry.
+
+**In cron, piping a script's output into an interpreter is BLOCKED** (approvals.cron_mode). Write to a file in one call, read it in the next. On this block, adapt immediately rather than retrying a variant of the same shape.
 
 ### Separating real DB growth from free-list bloat
 A growing SQLite file is not necessarily growing *data*. Read the free list directly (read-only, so a live DB is safe): `PRAGMA page_size` / `page_count` / `freelist_count` against `file:...?mode=ro`. Free-list pages are reclaimable by VACUUM; `size - free` is the real payload. Confirmed 2026-09-26: `chronicle.db` at 2,404 MB with 0 MB free-list (genuine data growth) vs `state.db` at 1,505 MB with 564 MB free-list (37.5% reclaimable). Attributing "disk is growing" without this split mis-sends the fix — data growth needs retention work, bloat needs VACUUM.
