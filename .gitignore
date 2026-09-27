@@ -20,3 +20,13 @@ assets/readme/hero.svg
 
 # local PII denylist — names/employers, must never publish
 .pii-denylist
+
+# Local-only operational watchers. These read THIS host's registry, mailbox and
+# filesystem layout, so they are written to work here, not to be published. The
+# auto-sync commits with `git add -A`, which stages anything not ignored -- that
+# is the mechanism that published a host filesystem root, a profile name and an
+# operator mailbox on 2026-09-26, and again on 2026-09-27. Published watchers
+# are the genericised ones under scripts/; these stay on the host.
+scripts/finch_kdp_watch.py
+scripts/tseg_watch.py
+scripts/test_block_ledger_hook.sh
