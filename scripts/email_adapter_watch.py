@@ -40,13 +40,16 @@ def _default_profile() -> str:
     m = re.search(r"/profiles/([^/]+)/", str(Path(__file__).resolve()))
     if m:
         return m.group(1)
-    return os.environ.get("HERMES_PROFILE") or "indigo"
+    return os.environ.get("HERMES_PROFILE") or "<profile>"
 
 
 PROFILE = os.environ.get("HERMES_PROFILE_NAME") or _default_profile()
-PROFILE_HOME = Path(os.environ.get("HERMES_PROFILE_HOME") or f"/root/.hermes/profiles/{PROFILE}")
+HERMES_HOME = Path(os.environ.get("HERMES_HOME")
+                   or Path(os.path.expanduser("~")) / ".hermes")
+PROFILE_HOME = Path(os.environ.get("HERMES_PROFILE_HOME")
+                    or HERMES_HOME / "profiles" / PROFILE)
 # The multiplex host gateway lives at the ROOT Hermes home, not the profile home.
-HOST_HOME = Path(os.environ.get("HERMES_HOST_HOME") or "/root/.hermes")
+HOST_HOME = Path(os.environ.get("HERMES_HOST_HOME") or HERMES_HOME)
 HOST_STATE = HOST_HOME / "gateway_state.json"
 HOST_LOG = HOST_HOME / "logs" / "gateway.log"
 
