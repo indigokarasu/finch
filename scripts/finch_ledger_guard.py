@@ -37,8 +37,23 @@ see what was rewritten.
 EXIT CODES
 ----------
     0  no forward stamps (or --repair applied cleanly)
-    1  forward stamps present and not repaired
+    1  LEDGER forward stamps present and not repaired
     2  ledger unreadable / not JSON
+
+WHAT JOURNAL FINDINGS DO *NOT* DO TO THE EXIT CODE
+--------------------------------------------------
+The journal self-stamp check (added 2026-09-26) reports 24 of 275 action
+journals naming a moment later than their own mtime. They are HISTORICAL and
+there is no journal repair path, so no caller can ever clear them. Folding them
+into the exit code -- whether as 1 or as a separate 3 -- was tried and reverted:
+it makes a genuinely CLEAN ledger return non-zero forever, so callers learn to
+ignore the code, which is exactly how a guard stops guarding. My own test suite
+caught it (cases 4 and 5, "clean ledger must PASS", went red).
+
+The rule the fix settles: the EXIT CODE answers only "must a writer act on the
+ledger?" Journal findings are REPORTED (text + `self_stamp_forward` in --json)
+so nothing is hidden, but they never touch the code. A coverage claim belongs in
+the report; an action claim belongs in the exit code.
 """
 
 import argparse
@@ -193,49 +208,201 @@ def check(ledger_path=None, journal_dir=None):
         + len(rep["task_fields"])
 
     # --- journal coherence -------------------------------------------------
+    rep["journals"] = _journal_coherence(journal_dir)
+    rep["journals_measured"] = bool(rep["journals"].get("measured"))
+    return rep
+
+
+# Journal self-timestamp keys, in priority order. A journal names the moment it
+# ran; that moment cannot be later than the file's own mtime. Same invariant as
+# the ledger header, applied to the Action Journal the SKILL.md requires.
+_SELF_STAMP_KEYS = ("timestamp", "as_of", "started_at", "scan_cycle")
+# Tolerate small filesystem/clock skew, and a writer that truncates to the
+# minute and commits a few seconds before the second hand catches up.
+_SKEW_TOLERANCE_S = 60
+# Filename prefixes by NAMESPACE. `work-*` journals carry a scan_number that is
+# NOT their own -- it is the scan they executed AGAINST (see work-0258.json
+# #144). Sorting those into a scan-number monotonicity series is a category
+# error: a number can legitimately sit between two scan numbers.
+_JOURNAL_NAMESPACES = ("scan", "work", "daily", "weekly", "finch-work")
+# A scan number, wherever it appears in a journal. The digit bound is loose on
+# purpose: the series is at 176 and climbing, and a 2-3 digit bound silently
+# drops every number outside it -- a coverage number derived from a partial
+# match is the same false-completion class as a summary that hides a second
+# page. Both the guard and finch_scan_counter MUST use this same pattern, or
+# the two tools disagree about which numbers exist (that drift is what left
+# the allocator blind to 26 numbers on 2026-09-27).
+_PROSE_NUM_RE = re.compile(r"finch:scan\s*#\s*(\d{1,4})\b")
+
+
+def _journal_namespace(path):
+    """Return the journal's namespace, or None if unrecognised."""
+    base = os.path.basename(path)
+    for ns in _JOURNAL_NAMESPACES:
+        if base.startswith(ns + "-"):
+            return ns
+    return None
+
+
+def _parse_offset(v):
+    """Parse a timestamp that may carry a UTC offset, to aware UTC."""
+    if not isinstance(v, str):
+        return None
+    m = TS_RE.match(v)
+    if not m:
+        return None
+    try:
+        dt = datetime.datetime.fromisoformat(v.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def _journal_coherence(journal_dir):
+    """Measure journal self-stamps and scan-number monotonicity.
+
+    FIXED 2026-09-26: the previous implementation globbed only `scan-*.json`
+    and so could not see the 24 journals whose own `timestamp`/`as_of` is later
+    than their mtime -- while still reporting `measured: true`. A coverage claim
+    is a claim about the read, not about the world. Two further defects: it
+    never checked a journal's OWN timestamp, and it folded `work-*` journals
+    into the scan series even though their scan_number references another run.
+    """
     jd = journal_dir or _resolve(_JOURNAL_DIRS)
     if not jd:
-        rep["journals"] = {"measured": False,
-                           "note": "NOT MEASURED -- journal dir not resolvable"}
-        return rep
-    files = sorted(glob.glob(os.path.join(jd, "**", "scan-*.json"), recursive=True))
+        return {"measured": False, "note": "NOT MEASURED -- journal dir not resolvable"}
+    files = sorted(glob.glob(os.path.join(jd, "**", "*.json"), recursive=True))
     if not files:
-        rep["journals"] = {"measured": False, "note": "NOT MEASURED -- no scan-*.json found"}
-        return rep
+        return {"measured": False, "note": "NOT MEASURED -- no *.json found"}
 
-    cohort, filename_mismatch = [], []
+    by_ns, self_stamp_fwd, skipped = {}, [], 0
     for f in files:
+        rel = os.path.relpath(f, jd)
         try:
             with open(f) as fh:
                 j = json.load(fh)
         except (json.JSONDecodeError, OSError):
+            skipped += 1
             continue
-        if not isinstance(j, dict) or not isinstance(j.get("scan_number"), int):
+        if not isinstance(j, dict):
+            skipped += 1
             continue
-        cohort.append(j["scan_number"])
-        base = os.path.basename(f)[5:9]           # HHMM
         jmt = datetime.datetime.fromtimestamp(os.path.getmtime(f), UTC)
+        by_ns.setdefault(_journal_namespace(f) or "other", []).append((rel, j, jmt))
+
+        # (1) self-stamp invariant, same shape as the ledger's.
+        for k in _SELF_STAMP_KEYS:
+            t = _parse_offset(j.get(k))
+            if t is None:
+                continue
+            delta = (t - jmt).total_seconds()
+            if delta > _SKEW_TOLERANCE_S:
+                self_stamp_fwd.append({"file": rel, "field": k, "value": j[k],
+                                       "mtime_utc": jmt.isoformat(),
+                                       "delta_min": round(delta / 60, 1)})
+            break
+
+    # (2) scan-number monotonicity, WITHIN the scan namespace only.
+    #
+    # A journal may carry `scan_number_suffix` when its number collided with
+    # another run's and the collision was adjudicated by hand (finch:work #199
+    # did this for #174). A suffixed journal IS a distinct run, so counting it
+    # as a duplicate of the number it collides with would re-report an
+    # adjudicated finding forever. It is excluded from the duplicate and
+    # monotonicity series and reported separately as ADJUDICATED, so the
+    # distinction between "unresolved collision" and "resolved collision" is
+    # visible rather than assumed.
+    def _adjudicated(j):
+        return bool(j.get("scan_number_suffix"))
+
+    series = sorted([(r, j, m) for r, j, m in by_ns.get("scan", [])
+                     if isinstance(j.get("scan_number"), int)
+                     and not _adjudicated(j)], key=lambda t: t[2])
+    adjudicated = sorted([(r, j) for r, j, _m in by_ns.get("scan", [])
+                          if isinstance(j.get("scan_number"), int)
+                          and _adjudicated(j)])
+    non_mono, dupes, prev = [], Counter(), None
+    for rel, j, _m in series:
+        sn = j["scan_number"]
+        dupes[sn] += 1
+        if prev is not None and sn <= prev:
+            non_mono.append({"file": rel, "previous": prev, "seen": sn})
+        prev = max(prev, sn) if prev is not None else sn
+    nums = sorted(dupes)
+    dup_map = {n: c for n, c in dupes.items() if c > 1}
+
+    # (3) filename-HHMM vs mtime, retained but scoped to the scan namespace.
+    fn_mismatch = []
+    for rel, j, jmt in by_ns.get("scan", []):
+        base = os.path.basename(rel)[5:9]
         if base.isdigit() and len(base) == 4:
             claim = int(base[:2]) * 60 + int(base[2:])
             if abs(claim - (jmt.hour * 60 + jmt.minute)) > 5:
-                filename_mismatch.append({"file": os.path.basename(f),
-                                          "scan_number": j["scan_number"],
-                                          "mtime_utc": jmt.strftime("%H:%M:%S")})
+                fn_mismatch.append({"file": rel,
+                                    "scan_number": j.get("scan_number"),
+                                    "mtime_utc": jmt.strftime("%H:%M:%S")})
 
-    cohort = sorted(cohort)
-    dupes = {n: c for n, c in Counter(cohort).items() if c > 1}
-    rep["journals"] = {
+    # (4) Archive recoverability. A scan that allocated a number but persisted
+    # it under a prose field (`run: "finch:scan #165"`) instead of `scan_number`
+    # is invisible to every check above, so measure the gap explicitly rather
+    # than let "cohort range 33-169" imply full coverage. Measured 2026-09-26:
+    # 92 of 275 journals carry a recoverable number (53 as `scan_number`, 39 in
+    # prose) covering 79 numbers; 58 allocated numbers left no recoverable trace.
+    # The live writer is monotonic and healthy, so this is a REPORTING gap, not
+    # lost work -- reported, never repaired, never exit-coded.
+    seen_all = set(nums)
+    prose_hits = []
+    for rel, j, _m in by_ns.get("scan", []) + by_ns.get("work", []):
+        if isinstance(j.get("scan_number"), int):
+            continue
+        # FIXED 2026-09-27: this used `re.search`, which returns the FIRST
+        # prose number in the document and discards the rest. A journal can
+        # carry more than one (2026-09-21/scan-93.json holds both 91 and 93),
+        # so the wider one was invisible here and the [COVERAGE] line
+        # OVER-REPORTED the unrecoverable count by counting #91 as lost. The
+        # digit bound was also `(\d{2,3})`, while the series passed 176 -- a
+        # 2-3 digit bound silently drops any number outside it. Same defect
+        # class as the allocator's 3-field harvest (finch:work #200): a
+        # coverage number derived from a partial read, presented as a fact
+        # about the corpus. Use finditer and a bound the series can exceed.
+        m_all = _PROSE_NUM_RE.findall(json.dumps(j, ensure_ascii=False))
+        if m_all:
+            nums_here = sorted({int(x) for x in m_all})
+            prose_hits.append({"file": rel, "via": "prose", "number": nums_here[0],
+                               "numbers": nums_here})
+            seen_all.update(nums_here)
+    unrecoverable = ([n for n in range(nums[0], nums[-1] + 1) if n not in seen_all]
+                     if nums else [])
+
+    return {
         "measured": True,
         "dir": jd,
         "files": len(files),
-        "with_scan_number": len(cohort),
-        "cohort_range": [cohort[0], cohort[-1]] if cohort else None,
-        "duplicate_scan_numbers": dupes,
-        "filename_clock_mismatch": filename_mismatch,
-        "note": "filename HHMM is not a reliable clock; scan_number and mtime are",
+        "unreadable_skipped": skipped,
+        "namespaces": {k: len(v) for k, v in sorted(by_ns.items())},
+        "with_scan_number": len(series),
+        "cohort_range": [nums[0], nums[-1]] if nums else None,
+        "duplicate_scan_numbers": dup_map,
+        "adjudicated_scan_collisions": [
+            {"file": r, "scan_number": j.get("scan_number"),
+             "suffix": j.get("scan_number_suffix")} for r, j in adjudicated],
+        "non_monotonic": non_mono,
+        "self_stamp_forward": self_stamp_fwd,
+        "self_stamp_forward_count": len(self_stamp_fwd),
+        "filename_clock_mismatch": fn_mismatch,
+        "work_scan_numbers_excluded": [r for r, j, _m in by_ns.get("work", [])
+                                       if isinstance(j.get("scan_number"), int)],
+        "scan_number_in_prose": len(prose_hits),
+        "scan_numbers_unrecoverable": unrecoverable,
+        "note": ("scan_number is compared only WITHIN the scan-* namespace: a "
+                 "work-* journal's scan_number names the scan it ran against, "
+                 "not its own number. filename HHMM is not a reliable clock; "
+                 "mtime is. scan_numbers_unrecoverable is a coverage measure, "
+                 "not a violation: the ledger's own scan_number is the "
+                 "authoritative counter."),
     }
-    rep["journals_measured"] = True
-    return rep
 
 
 def repair(path, dry_run=False):
@@ -337,23 +504,66 @@ def main():
         if not j.get("measured"):
             print("\njournals    : %s" % j.get("note"))
         else:
-            print("\njournals    : %d files, %d carry scan_number, range %s"
-                  % (j["files"], j["with_scan_number"], j["cohort_range"]))
+            print("\njournals    : %d files (%s), %d scan-* carry scan_number, range %s"
+                  % (j["files"],
+                     ", ".join("%s=%d" % kv for kv in j["namespaces"].items()),
+                     j["with_scan_number"], j["cohort_range"]))
+            if j["self_stamp_forward"]:
+                print("   JOURNAL SELF-STAMP FORWARD on %d file(s):"
+                      % len(j["self_stamp_forward"]))
+                for s in j["self_stamp_forward"]:
+                    print("      %-34s %-9s %-28s mtime=%s  (+%.0f min)"
+                          % (s["file"], s["field"], s["value"],
+                             s["mtime_utc"][11:19], s["delta_min"]))
+            for n in j["non_monotonic"]:
+                print("   NON-MONOTONIC scan_number: %s  #%s after #%s"
+                      % (n["file"], n["seen"], n["previous"]))
             if j["duplicate_scan_numbers"]:
-                print("   DUPLICATE scan_number: %s" % j["duplicate_scan_numbers"])
+                print("   DUPLICATE scan_number: %s"
+                      % ", ".join("#%s x%d" % kv for kv in j["duplicate_scan_numbers"].items()))
+            if j.get("adjudicated_scan_collisions"):
+                print("   ADJUDICATED collision (suffixed, excluded from the series): %s"
+                      % ", ".join("#%s%s (%s)" % (c["scan_number"], c["suffix"], c["file"])
+                                  for c in j["adjudicated_scan_collisions"]))
+            if j.get("scan_number_in_prose"):
+                print("   [COVERAGE] %d journal(s) carry their scan number in prose only"
+                      " (`run: finch:scan #N`); %d allocated number(s) left no"
+                      " recoverable trace."
+                      % (j["scan_number_in_prose"], len(j["scan_numbers_unrecoverable"])))
+            if j["work_scan_numbers_excluded"]:
+                print("   excluded from scan series (work-*, scan_number is the"
+                      " scan it ran against): %s"
+                      % ", ".join(j["work_scan_numbers_excluded"]))
             if j["filename_clock_mismatch"]:
-                print("   filename-HHMM vs mtime DISAGREES on %d file(s): %s"
-                      % (len(j["filename_clock_mismatch"]),
-                         ", ".join("%s=#%s" % (m["file"][5:9], m["scan_number"])
-                                   for m in j["filename_clock_mismatch"])))
+                _mm = j["filename_clock_mismatch"]
+                print("   [LOW SIGNAL] filename-HHMM vs mtime DISAGREES on %d file(s): %s"
+                      % (len(_mm),
+                         ", ".join("%s=#%s" % (os.path.basename(m["file"]),
+                                               m["scan_number"])
+                                   for m in _mm[:6])
+                         + (" ... (+%d more)" % (len(_mm) - 6) if len(_mm) > 6 else "")))
+                print("      No action implied: measured 2026-09-26, the signed skew is"
+                      " BIDIRECTIONAL (98 files written later than their slot, 59"
+                      " earlier, median +2 min), so a disagreement carries no"
+                      " forward-stamp information. Listed for completeness only.")
         if repaired:
             print("\nrepairs%s:" % (" (DRY RUN, nothing written)" if a.dry_run else ""))
             for c in repaired:
                 print("   %-8s %-44s %-18s %s -> %s  (-%.0fs)"
                       % (c["scope"], c["id"], c["field"], c["from"], c["to"], c["delta_s"]))
-        print("\nVERDICT: %s" % (
-            "CLEAN" if rep["forward_count"] == 0
-            else "%d FORWARD STAMP(S) PRESENT" % rep["forward_count"]))
+        jf = (rep["journals"].get("self_stamp_forward_count", 0)
+              if rep["journals"].get("measured") else 0)
+        if rep["forward_count"]:
+            print("\nVERDICT: %d LEDGER FORWARD STAMP(S) PRESENT" % rep["forward_count"])
+        elif jf:
+            print("\nVERDICT: LEDGER CLEAN; %d JOURNAL SELF-STAMP(S) PRESENT"
+                  " (historical, not written by this run)" % jf)
+        else:
+            print("\nVERDICT: CLEAN")
+    # The EXIT CODE answers only "must a writer act on the ledger?". Journal
+    # self-stamps are historical with no repair path, so they are reported but
+    # never change the code -- otherwise a clean ledger stays non-zero forever
+    # and callers stop reading the code at all.
     return 0 if rep["forward_count"] == 0 else 1
 
 

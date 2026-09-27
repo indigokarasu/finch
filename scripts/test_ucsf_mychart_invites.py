@@ -24,6 +24,12 @@ Every assertion here pins a defect that was live in the script on 2026-09-26:
      fixed decoder strips. Pin: provider parses from tag-stripped text.
   5. The Location field is ZIP-terminated and followed by cancel/reschedule
      boilerplate that no label delimits. Pin: the field stops at the ZIP.
+  6. finch:work #202 (2026-09-27): the fail-loud guard was UNSATISFIABLE. It
+     fired on a placeholder sender address that no job, env file, or config ever
+     supplied, so the script exited 4 on every invocation -- including the exact
+     environment a scheduler gives it. A guard nobody can satisfy is a wall, not
+     a guard. Pin: unset scope exits 4, a configured scope exits 0 on a real
+     mailbox, and one domain vs several produce the same shape of query.
 
 Run: python3 test_ucsf_mychart_invites.py     (exit 0 = all pass)
 """
@@ -73,7 +79,7 @@ def b64(s):
 
 
 # Genericised stand-ins for the real portal sender and its notices.
-PORTAL = "donotreplyportal@example.com"
+PORTAL = "example-portal.org"
 
 print("=" * 78)
 print("1. CARE_CUES: the trailing-alternation defect")
@@ -106,7 +112,7 @@ print()
 print("=" * 78)
 print("3. body_text: the text/plain-only defect (real notices are HTML-only)")
 print("=" * 78)
-m = load({"CARE_NOTIFY_ADDR": PORTAL})
+m = load({"CARE_NOTIFY_DOMAINS": PORTAL})
 
 HTML_ONLY = {
     "mimeType": "text/html",
@@ -166,16 +172,39 @@ check(got == "Example Urgent Care Northside 100 Example Ave Fl2 Sample City, CA 
 
 print()
 print("=" * 78)
-print("5. Placeholder guard: unconfigured must NOT report a clean mailbox")
+print("5. Portal-scope guard: unconfigured must NOT report a clean mailbox")
 print("=" * 78)
 env = {k: v for k, v in os.environ.items() if not k.startswith("CARE_")}
 env["PATH"] = os.environ.get("PATH", "")
 p = subprocess.run([sys.executable, str(SCRIPT), "--acct", "nobody@example.invalid"],
                    env=env, capture_output=True, text=True, timeout=120)
 check(p.returncode == 4, "unconfigured run exits 4, got %s" % p.returncode)
-check("placeholder" in p.stderr.lower(), "stderr explains the placeholder")
+check("CARE_NOTIFY_DOMAINS" in p.stderr, "stderr names the variable to set")
 check("Outstanding invites: NONE" not in p.stdout,
       "unconfigured run does NOT print a clean-mailbox verdict")
+
+# A placeholder domain that is still in the list is the same defect wearing a
+# configured hat -- it must not be treated as a real scope.
+p2 = subprocess.run([sys.executable, str(SCRIPT), "--acct", "nobody@example.invalid"],
+                    env={**env, "CARE_NOTIFY_DOMAINS": "portal.example.com"},
+                    capture_output=True, text=True, timeout=120)
+check(p2.returncode == 4, "placeholder domain still exits 4, got %s" % p2.returncode)
+
+print()
+print("=" * 78)
+print("6. from_clause: one domain and several are the same shape")
+print("=" * 78)
+m1 = load({"CARE_NOTIFY_DOMAINS": "alpha.health"})
+check(m1.NOTIFY_DOMAINS == ["alpha.health"], "single domain parsed")
+check(m1.from_clause() == "from:{alpha.health}", "single-domain query: %r" % m1.from_clause())
+m2d = load({"CARE_NOTIFY_DOMAINS": "alpha.health, beta.health ,"})
+check(m2d.NOTIFY_DOMAINS == ["alpha.health", "beta.health"], "list parsed + trimmed: %r" % m2d.NOTIFY_DOMAINS)
+check("OR" in m2d.from_clause() and "beta.health" in m2d.from_clause(),
+      "multi-domain query is an explicit alternation: %r" % m2d.from_clause())
+m3 = load({})
+check(m3.NOTIFY_DOMAINS == [], "unset scope is empty, not a placeholder address")
+check("" not in m3.from_clause() or m3.from_clause() == "from:{}",
+      "unset scope cannot produce a bare from: (%r)" % m3.from_clause())
 
 print()
 print("=" * 78)

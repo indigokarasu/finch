@@ -113,6 +113,17 @@ DecisionRecord entries in `{agent_root}/commons/data/ocas-finch/decisions.jsonl`
    ```
    Use the `id` column values as `session_id` for subsequent `session_search(session_id=...)` calls to read full session content. The 10-result cap means finch:weekly can miss older interactive sessions if there are more than 10 cron sessions newer than them.
 
+   `~/.hermes/state.db` and `~/.hermes/profiles/indigo/state.db` are the SAME
+   file (identical counts) — either path is fine; don't treat them as separate
+   sources or double-count.
+
+   `session_search` with no `query` returns **browse** mode: the 10 most recent
+   sessions regardless of source, which on a busy profile is ~10 cron runs and
+   zero user messages. It will look like "no interactive activity" when dozens
+   exist. Always filter `source IN ('telegram','desktop','tui','cli','web')` in
+   SQL before concluding anything about user activity. Do not trust a browse-mode
+   session list as evidence of silence.
+
 ## Failure-phase taxonomy (from arxiv:2508.13143)
 
 When mining corrections and failures, categorize each by the task phase where the failure occurred. This enables targeted skill patches instead of vague "be more careful" updates:
@@ -124,6 +135,31 @@ When mining corrections and failures, categorize each by the task phase where th
 | **Response** | Correct result but wrong format, verbosity, tone, or framing | "Too verbose" / "Wrong format" |
 
 Route planning-phase corrections to skill preconditions/setup sections. Route execution-phase corrections to tool-usage/gotchas sections. Route response-phase corrections to output-formatting sections. This produces surgical patches instead of blanket directives.
+
+## Recurring corrections: count, then find the mechanism
+
+When the user corrects the same thing more than once in a window, the second
+occurrence is not a new signal — it is evidence that the first fix landed in the
+wrong place. Do NOT write another MEMORY.md line for it. Two steps, in order:
+
+1. **Count it, don't eyeball it.** Print the occurrences with a regex theme
+   count over interactive user messages in the window, with the first-seen
+   timestamp per theme. A correction the user repeats verbatim ("COUNT HOW MANY
+   TIMES I'M TOLD YOU THIS") is a request for that number, not for a promise.
+2. **Then inspect the mechanism the correction is about.** If the rule is about
+   *where output goes* (delivery channel, target, destination), open the live
+   cron registry and read the job's actual delivery config / registry file. If
+   the mechanism is now correct, the remaining recurrence is historical and the
+   entry is already fixed — say so and move on. If it is still wrong, that is a
+   `finch:work` task, not a memory write.
+
+Corollary: a rule the user states many times is usually a rule whose
+*enforcement point* is not where the rule lives. Rules about delivery belong in
+the sending code and its registry, not in memory.
+
+Also: when a user message is duplicated across several sessions (Telegram
+fan-out of one message into multiple topics), the theme count will over-report.
+Count distinct source-message content, not rows, when quoting a number back.
 
 ## Elaborative interrogation (from Dunlosky et al. 2013)
 
