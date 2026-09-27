@@ -37,12 +37,38 @@ HOME_DIR = os.path.expanduser("~")
 PROFILE = os.environ.get("HERMES_PROFILE", "")
 
 
+def _resolve_profile():
+    """Find this host's profile name, preferring the environment.
+
+    Order: $HERMES_PROFILE, then the profile this script itself lives under.
+    A script at .../profiles/<name>/skills/<skill>/scripts/ is inside <name> by
+    construction, so that is a general rule derived from our own path, not a
+    baked-in host value. Needed because cron sessions do not always export
+    HERMES_PROFILE -- when they do not, the DB section below used to render
+    EMPTY, which reads as "no bloat" when it actually means "not measured".
+    That is a false negative in the safe direction, i.e. the worst kind here.
+    """
+    if PROFILE:
+        return PROFILE, "env"
+    here = os.path.abspath(__file__)
+    parts = here.split(os.sep)
+    for i, p in enumerate(parts):
+        if p == "profiles" and i + 1 < len(parts):
+            cand = parts[i + 1]
+            if os.path.isdir(os.path.join(HOME_DIR, ".hermes", "profiles", cand)):
+                return cand, "self_path"
+    return "", "unresolved"
+
+
+PROFILE, PROFILE_SOURCE = _resolve_profile()
+
+
 def _db_target(rel):
     """Resolve a DB path under this host's Hermes profile root.
 
-    Generic by construction: the profile name and home directory come from the
-    environment, so this file carries no host-specific path and works on any
-    machine that sets $HERMES_PROFILE. Skips targets when unset."""
+    Generic by construction: the profile name comes from $HERMES_PROFILE or from
+    this script's own location, and the home directory from the environment, so
+    this file carries no host-specific path and works on any machine."""
     if not PROFILE:
         return None
     return os.path.join(HOME_DIR, ".hermes", "profiles", PROFILE, rel)
@@ -213,8 +239,19 @@ def main():
     else:
         verdict = "gate unmet - no preemptive destructive cleanup"
 
+    # Do not let a run younger than the extrapolation guard overwrite the
+    # baseline. finch:scan and finch:work both run more often than
+    # MIN_BASELINE_AGE_H, so writing on every run pins the baseline at ~0h and
+    # the growth leg of the gate can then never be evaluated at all -- it
+    # reports "unknown" forever. That is a false negative in the safe
+    # direction: the one trigger that catches a real leak is the one that
+    # never fires. Keeping the older sample makes every ~3rd run measurable
+    # instead, and still refreshes once the sample has aged past the guard.
+    baseline_written = False
     if not args.no_baseline_write:
-        save_baseline(used_mb, pct)
+        if base is None or (age_h is not None and age_h >= MIN_BASELINE_AGE_H):
+            save_baseline(used_mb, pct)
+            baseline_written = True
 
     report = {
         "used_mb": round(used_mb, 1),
@@ -229,8 +266,13 @@ def main():
         "growth_met": growth_met,
         "baseline_age_hours": None if age_h is None else round(age_h, 2),
         "growth_stale": growth_stale,
+        "growth_measured": growth_mb_24h is not None,
+        "baseline_written": baseline_written,
         "deleted_open_leaks": leaks,
         "db_bloat": dbs,
+        "db_bloat_measured": bool(dbs) or PROFILE_SOURCE != "unresolved",
+        "profile": PROFILE,
+        "profile_source": PROFILE_SOURCE,
         "top_dirs_mb": [{"mb": mb, "path": p} for mb, p in dirs],
         "verdict": verdict,
     }
@@ -270,6 +312,17 @@ def main():
     print(f"\nVERDICT: {verdict}")
 
     print("\n=== DB BLOAT (free-list is reclaimable; used is real data) ===")
+    if not dbs:
+        # Distinguish "measured, nothing to reclaim" from "could not measure".
+        # An empty list used to print as a blank section, which a reader takes
+        # for "no bloat" -- the safe-looking reading -- when it can also mean the
+        # profile never resolved. Say which one it is.
+        if PROFILE_SOURCE == "unresolved":
+            print("  NOT MEASURED - could not resolve a Hermes profile name "
+                  "(set $HERMES_PROFILE). This is NOT 'no bloat'.")
+        else:
+            print(f"  none found under profiles/{PROFILE} (profile={PROFILE}, "
+                  f"source={PROFILE_SOURCE}) - measured, nothing to report")
     for d in dbs:
         if "error" in d:
             print(f"  {d['db']:<14} ERROR {d['error']}")
