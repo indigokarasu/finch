@@ -216,6 +216,100 @@ def main():
                   % (rc, ok, "OK" if ok else "*** MUTATED LIVE LEDGER ***"))
             if not ok:
                 fails.append("case9 suite modified the live ledger")
+
+        # --- cases 17-20: MTIME LAUNDERING (finch:work #204) --------------
+        #
+        # The guard compares stamps to the file's CURRENT mtime, so a later
+        # write that copies an offending stamp through unchanged makes the
+        # violation disappear -- the very pass that ran the guard hides what
+        # the guard found. Live 2026-09-27: finch:work #203 stamped 07:50:00Z
+        # into a ledger at mtime 07:39:45Z (+615s, exit 1); finch:scan #956 then
+        # rewrote the same ledger at 07:58:25Z carrying the identical value, and
+        # the same bytes read CLEAN. The receipt is what makes it catchable.
+        #
+        # The three instants are RELATIVE, and each one is load-bearing:
+        #   M0 < stamp < M1.  Against M0 the stamp is forward (caught).  A
+        # later write advances the mtime to M1, past the stamp, without
+        # touching the value -- the laundering.  All three must be computed
+        # from now(): a hardcoded fixture date sits in the past relative to a
+        # present-day mtime, so nothing is ever forward and the case passes
+        # vacuously. (That is exactly how a first draft of this block failed
+        # -- it asserted exit=1 and got exit=0 for the right reason.)
+        ltmp2 = os.path.join(tmpdir, "launder")
+        os.makedirs(ltmp2)
+        led2 = os.path.join(ltmp2, "task-list.json")
+        now = datetime.datetime.now(UTC)
+        m0 = now - datetime.timedelta(hours=3)      # when the bad write landed
+        m1 = now - datetime.timedelta(minutes=30)   # when a later write moved past it
+        stamp = (now - datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        d2 = json.loads(json.dumps(base))
+        d2["last_work_at"] = stamp
+        t2 = next(x for x in d2["tasks"] if x.get("id") == SAMPLE_ID)
+        t2["updated_at"] = stamp
+        save(led2, d2)
+        os.utime(led2, (m0.timestamp(), m0.timestamp()))
+
+        # run 1: genuinely forward -> exit 1, and a receipt is written
+        rc, out = run(led2)
+        got_receipt = os.path.exists(led2 + ".guard-receipts.jsonl")
+        ok = rc == 1 and got_receipt
+        print("[17] forward + receipt      -> exit=%d receipt=%s %s"
+              % (rc, got_receipt, "OK" if ok else "*** WRONG ***"))
+        if not ok:
+            fails.append("case17 forward run wrote no receipt (rc=%s, receipt=%s)"
+                         % (rc, got_receipt))
+
+        # run 2: THE LAUNDERING. Same bytes, mtime advanced past the stamp.
+        os.utime(led2, (m1.timestamp(), m1.timestamp()))
+        rc, out = run(led2)
+        ok = rc == 1 and "LAUNDERED" in out
+        print("[18] laundered by mtime    -> exit=%d %s"
+              % (rc, "CAUGHT" if ok else "*** MISSED ***"))
+        if not ok:
+            fails.append("case18 laundered stamp not caught (rc=%s)" % rc)
+
+        # run 3: --repair must clamp it AND the receipt must RETIRE. A
+        # receipt that never retires would pin a clean ledger at exit 1
+        # forever -- the exact regression the exit-code docstring warns about.
+        rc, out = run(led2, ("--repair",))
+        d3b = load(led2)
+        t3b = next(x for x in d3b["tasks"] if x.get("id") == SAMPLE_ID)
+        clamped = d3b["last_work_at"] != stamp and t3b["updated_at"] != stamp
+        rc2, out2 = run(led2)
+        ok = clamped and rc2 == 0 and "LAUNDERED" not in out2
+        print("[19] repair retires receipt-> clamped=%s post_exit=%d %s"
+              % (clamped, rc2, "OK" if ok else "*** WRONG ***"))
+        if not ok:
+            fails.append("case19 repair did not clamp and retire (clamped=%s, rc=%s)"
+                         % (clamped, rc2))
+
+        # run 4: an HONEST later pass rewrites the value. The old value is
+        # gone, so nothing may be reported laundered -- the receipt must not
+        # fire on a value that was legitimately replaced.
+        led3 = os.path.join(ltmp2, "honest.json")
+        d4 = json.loads(json.dumps(base))
+        d4["last_work_at"] = stamp
+        t4 = next(x for x in d4["tasks"] if x.get("id") == SAMPLE_ID)
+        t4["updated_at"] = stamp
+        save(led3, d4)
+        os.utime(led3, (m0.timestamp(), m0.timestamp()))
+        run(led3)                                   # forward -> receipt written
+        os.utime(led3, (m1.timestamp(), m1.timestamp()))
+        d4b = load(led3)
+        newval = (now - datetime.timedelta(minutes=45)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        d4b["last_work_at"] = newval
+        t4b = next(x for x in d4b["tasks"] if x.get("id") == SAMPLE_ID)
+        t4b["updated_at"] = newval
+        save(led3, d4b)
+        nowts = datetime.datetime.now(UTC).timestamp()
+        os.utime(led3, (nowts, nowts))
+        rc, out = run(led3)
+        ok = rc == 0 and "LAUNDERED" not in out
+        print("[20] honest rewrite        -> exit=%d %s"
+              % (rc, "OK" if ok else "*** FALSE POSITIVE ***"))
+        if not ok:
+            fails.append("case20 honest rewrite falsely reported as laundered (rc=%s)" % rc)
+        shutil.rmtree(ltmp2, ignore_errors=True)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -377,6 +471,7 @@ def journal_cases():
               % (rc, got, "OK" if ok else "*** WRONG ***"))
         if not ok:
             fails.append("case16 only the first prose number was harvested (got %s, want 1)" % got)
+
     finally:
         shutil.rmtree(jtmp, ignore_errors=True)
         shutil.rmtree(ltmp, ignore_errors=True)
