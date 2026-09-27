@@ -3,7 +3,7 @@
 land in a real mailbox with no live counterpart.
 
 WHY THIS EXISTS (2026-09-26, finch:work, task email-orphan-headerless-drafts):
-four Gmail drafts appeared in jared.zimmerman@gmail.com dated 09-25 whose
+four Gmail drafts appeared in operator@example.com dated 09-25 whose
 bodies are code-review replies ("the lru_cache approach is the right
 direction", "the credit limit issue is on their end"). A scan recorded them
 as "header-less artifacts of a batch script". That was wrong on two counts,
@@ -27,7 +27,7 @@ since the last run. Read-only. No LLM. No writes to Gmail.
 Exit 0 = ran clean (whether or not orphans are present).
 
 Flags:
-  --acct <email>     mailbox to inspect (default jared.zimmerman@gmail.com)
+  --acct <email>     mailbox to inspect (default operator@example.com)
   --json             machine-readable output only
   --pr-hints         also print the PR references parsed out of Subjects
 
@@ -131,7 +131,7 @@ def describe(svc, draft):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--acct", default="jared.zimmerman@gmail.com")
+    ap.add_argument("--acct", default="operator@example.com")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--pr-hints", action="store_true",
                     help="include parsed PR references in the report")

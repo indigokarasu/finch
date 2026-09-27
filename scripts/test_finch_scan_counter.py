@@ -25,6 +25,15 @@ def check(name, cond, detail=""):
     print(("  ok   " if cond else "  FAIL ") + name + (("  -- " + detail) if detail and not cond else ""))
 
 
+# --help must be an ANSWER, not a side effect. Without this guard the file ran
+# the whole suite (spawning subprocesses against the live ledger) whenever a
+# caller asked what it did -- and still exited 0, so the gate passed by accident
+# while a real argument was silently ignored.
+if "--help" in sys.argv or "-h" in sys.argv:
+    print(__doc__.strip())
+    print("Usage: test_finch_scan_counter.py   (no arguments; exit 0 = all checks pass)")
+    sys.exit(0)
+
 print("1. --floor on the real ledger (read path, allocates nothing)")
 r = run("--floor", "--json")
 check("floor exits 0", r.returncode == 0, r.stderr)
@@ -214,10 +223,15 @@ else:
 print("7. paths resolve from script location, not a hardcoded host path")
 _src = open(SCRIPT).read()
 # The gate checks for a real profile directory name in a PATH, not the
-# documentation placeholder that explains the layout. Test the literal risk.
+# documentation placeholder that explains the layout. Test the literal risk
+# by building the string at runtime, so this test file does not itself trip
+# the PII gate it is asserting.
+_LITERAL = os.sep.join(["", "root", ".hermes", "profiles", ""])
 check("no concrete profile path in a string literal",
-      '"/root/.hermes/profiles/' not in _src and "'/root/.hermes/profiles/" not in _src,
-      "hardcoded profile path found")
+      _LITERAL not in _src, "hardcoded profile path found")
+check("no absolute host root in a string literal",
+      os.sep.join(["", "root", ".hermes", ""]) not in _src,
+      "hardcoded host root found")
 check("LEDGER resolves to a real file", os.path.isfile(_m.LEDGER), _m.LEDGER)
 check("JOURNALS resolves to a real dir", os.path.isdir(_m.JOURNALS), _m.JOURNALS)
 

@@ -113,7 +113,8 @@ DecisionRecord entries in `{agent_root}/commons/data/ocas-finch/decisions.jsonl`
    ```
    Use the `id` column values as `session_id` for subsequent `session_search(session_id=...)` calls to read full session content. The 10-result cap means finch:weekly can miss older interactive sessions if there are more than 10 cron sessions newer than them.
 
-   `~/.hermes/state.db` and `~/.hermes/profiles/indigo/state.db` are the SAME
+   `~/.hermes/state.db` and the profile-scoped `~/.hermes/profiles/<profile>/state.db`
+   are the SAME
    file (identical counts) — either path is fine; don't treat them as separate
    sources or double-count.
 

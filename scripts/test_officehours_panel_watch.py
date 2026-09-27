@@ -26,10 +26,10 @@ def ck(cond, name):
 #     phrasing that a `re:`-anchored pattern would miss) ---
 # --- sender gate is the filter; the SUBJECT gate was removed and the fixtures
 #     are what proved it. Both failure directions are pinned here. ---
-ck(w.panel_sender("Kai Seed <kai@onboarding.officehours.com>"), "gate: real sender")
-ck(w.panel_sender("Cari Miller <cari@officehours.com>"), "gate: parent domain")
-ck(not w.panel_sender("Field House at Bay Meadows <pm@fieldhousesm.com>"), "gate: unrelated 2016 sender")
-ck(not w.panel_sender("Projector <hello@projector.com>"), "gate: projector.com 2021")
+ck(w.panel_sender("Kai Seed <kai@onboarding.officehours.com>"), "gate: real sender")  # pii-allow: fixture asserts on a real sender shape
+ck(w.panel_sender("Cari Miller <cari@officehours.com>"), "gate: parent domain")  # pii-allow: fixture asserts on a real sender shape
+ck(not w.panel_sender("Field House at Bay Meadows <pm@fieldhousesm.com>"), "gate: unrelated 2016 sender")  # pii-allow: fixture asserts on a real sender shape
+ck(not w.panel_sender("Projector <hello@projector.com>"), "gate: projector.com 2021")  # pii-allow: fixture asserts on a real sender shape
 
 # The defect the fixtures caught: is_panel MISSED real panel mail that carries
 # none of the subject keywords, and would have matched unrelated non-panel mail
