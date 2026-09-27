@@ -14,10 +14,16 @@ Exit:   0 = execution healthy, 1 = provider error has returned, 2 = could not me
 import argparse, glob, json, os, subprocess, sys, datetime
 
 JOB = "5e7a5ce29d50"
-KODA_CRON = "/root/.hermes/profiles/koda/cron"
+# Layout is RESOLVED, never hardcoded: this repo is public, so a real filesystem
+# root or a concrete profile name is a leak and useless on another host.
+HERMES_HOME = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+TARGET_PROFILE = os.environ.get("OCAS_KODA_PROFILE", "<profile>")
+SCRATCH_PROFILE = os.environ.get("OCAS_SCRATCH_PROFILE", "<profile>")
+KODA_HOME = os.path.join(HERMES_HOME, "profiles", TARGET_PROFILE)
+KODA_CRON = os.path.join(KODA_HOME, "cron")
 JOBS = os.path.join(KODA_CRON, "jobs.json")
 OUT = os.path.join(KODA_CRON, "output", JOB)
-SCRATCH = "/root/.hermes/profiles/indigo/cache/scratch"
+SCRATCH = os.path.join(HERMES_HOME, "profiles", SCRATCH_PROFILE, "cache", "scratch")
 PROVIDER_ERR = "No LLM provider configured"
 
 
@@ -33,7 +39,7 @@ def scheduler_env():
         exe = os.readlink("/proc/%s/exe" % pid[0])
         raw = open("/proc/%s/environ" % pid[0], "rb").read().split(b"\0")
         env = dict(k.split(b"=", 1) for k in raw if b"=" in k)
-        pp_val = env.get(b"PYTHONPATH", b"/root/.hermes/hermes-agent").decode()
+        pp_val = env.get(b"PYTHONPATH", os.path.join(HERMES_HOME, "hermes-agent").encode()).decode()
         open(py, "w").write(exe)
         open(pp, "w").write(pp_val)
     return open(py).read().strip(), open(pp).read().strip()
@@ -50,8 +56,8 @@ def resolve_in_koda_scope():
             "import os,sys,json\n"
             "for p in %r.split(':'):\n"
             "    if p not in sys.path: sys.path.insert(0,p)\n"
-            "os.environ['HERMES_HOME']='/root/.hermes/profiles/koda'\n"
-            "os.environ['HERMES_PROFILE']='koda'\n"
+            "os.environ['HERMES_HOME']=%r\n"
+            "os.environ['HERMES_PROFILE']=%r\n"
             "import cron.scheduler as S\n"
             "reg=json.load(open(%r))\n"
             "jobs=reg['jobs'] if isinstance(reg,dict) and 'jobs' in reg else reg\n"
@@ -68,12 +74,12 @@ def resolve_in_koda_scope():
             "except Exception as e:\n"
             "    out.update(error='%s: %%s'%%(type(e).__name__,str(e)[:160]))\n"
             "print('@@'+json.dumps(out))\n"
-            % (pp, JOBS, JOB, JOB, JOB, JOB, "resolve_failed")
+            % (pp, KODA_HOME, TARGET_PROFILE, JOBS, JOB, JOB, JOB, JOB, "resolve_failed")
         )
     env = {**os.environ, "PYTHONPATH": pp,
-           "HERMES_HOME": "/root/.hermes/profiles/koda", "HERMES_PROFILE": "koda"}
+           "HERMES_HOME": KODA_HOME, "HERMES_PROFILE": TARGET_PROFILE}
     r = subprocess.run([py, probe], env=env, capture_output=True, text=True,
-                       cwd="/root/.hermes/profiles/koda")
+                       cwd=KODA_HOME)
     for line in r.stdout.splitlines():
         if line.startswith("@@"):
             return json.loads(line[2:])
@@ -90,8 +96,8 @@ def delivery_verdict():
             "import os,sys,json\n"
             "for p in %r.split(':'):\n"
             "    if p not in sys.path: sys.path.insert(0,p)\n"
-            "os.environ['HERMES_HOME']='/root/.hermes/profiles/koda'\n"
-            "os.environ['HERMES_PROFILE']='koda'\n"
+            "os.environ['HERMES_HOME']=%r\n"
+            "os.environ['HERMES_PROFILE']=%r\n"
             "import cron.scheduler as S\n"
             "reg=json.load(open(%r))\n"
             "jobs=reg['jobs'] if isinstance(reg,dict) and 'jobs' in reg else reg\n"
@@ -104,12 +110,12 @@ def delivery_verdict():
             "        'deliver':job.get('deliver')}))\n"
             "except Exception as e:\n"
             "    print('@@'+json.dumps({'measured':True,'error':str(e)[:160]}))\n"
-            % (pp, JOBS, JOB)
+            % (pp, KODA_HOME, TARGET_PROFILE, JOBS, JOB)
         )
     env = {**os.environ, "PYTHONPATH": pp,
-           "HERMES_HOME": "/root/.hermes/profiles/koda", "HERMES_PROFILE": "koda"}
+           "HERMES_HOME": KODA_HOME, "HERMES_PROFILE": TARGET_PROFILE}
     r = subprocess.run([py, probe], env=env, capture_output=True, text=True,
-                       cwd="/root/.hermes/profiles/koda")
+                       cwd=KODA_HOME)
     for line in r.stdout.splitlines():
         if line.startswith("@@"):
             return json.loads(line[2:])

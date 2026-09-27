@@ -31,8 +31,13 @@ import sys
 from datetime import datetime, timezone
 
 JOB_ID = "dfd7f742d4f2"
-AGENT_ROOT = os.environ.get("OCAS_AGENT_ROOT", "/root/.hermes/profiles/indigo")
-HERMES_SRC = "/root/.hermes/hermes-agent"
+# Host layout is resolved, never hardcoded: a public repo must not carry a
+# real filesystem root or a concrete profile name. Override either var to
+# point at a different host; both default to the documented layout.
+HERMES_HOME = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+AGENT_ROOT = os.environ.get("OCAS_AGENT_ROOT") or os.path.join(
+    HERMES_HOME, "profiles", os.environ.get("HERMES_PROFILE", "<profile>"))
+HERMES_SRC = os.path.join(HERMES_HOME, "hermes-agent")
 REGISTRY = os.path.join(AGENT_ROOT, "cron", "jobs.json")
 CONFIG = os.path.join(AGENT_ROOT, "config.yaml")
 
@@ -73,14 +78,14 @@ def resolve_live(job):
     """Run the scheduler's own delivery resolution against the live config.
 
     SCOPE MATTERS, and getting it wrong inverts the verdict. This job's
-    registry is SHARED (profiles/indigo/cron/jobs.json and /root/.hermes/cron/
-    jobs.json are one inode), but ``load_gateway_config()`` reads
+    registry is SHARED (a profile-scoped cron/jobs.json and the host-root
+    cron/jobs.json are one inode), but ``load_gateway_config()`` reads
     ``$HERMES_HOME``. Under the ROOT home the telegram PlatformConfig is
     ``enabled=False`` and this target -- plus EVERY other telegram-delivering
-    job -- reports "not configured/enabled". Under the INDIGO profile scope the
+    job -- reports "not configured/enabled". Under the PROFILE scope the
     same block is ``enabled=True`` and it resolves, which is what the live
-    gateway does (multiplex mode serves the indigo profile from the root
-    process). So resolution MUST happen inside the indigo profile scope; the
+    gateway does (multiplex mode serves the profile from the root
+    process). So resolution MUST happen inside the profile scope; the
     root-home reading is a true statement about the wrong config.
     """
     if not os.path.isdir(HERMES_SRC):

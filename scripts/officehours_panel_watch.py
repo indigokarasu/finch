@@ -7,12 +7,16 @@ in the inbox, (2) how often does the drip fire, (3) has the operator converted
 
 Never sends, never writes. Exits 0 when the sweep completes.
 """
+import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 
-CREDS = "/root/.google_workspace_mcp/credentials/jared.zimmerman@gmail.com.json"
+ACCT = os.environ.get("OCAS_OPERATOR_EMAIL", "operator@example.com")
+CREDS = os.path.join(os.path.expanduser("~/.google_workspace_mcp/credentials"),
+                    f"{ACCT}.json")
 DOMAINS = ("officehours.com", "officehours.io")
 # Scope the sender in GMAQL (server-side, exact) and filter the SUBJECT in
 # Python. Never concatenate a Python regex onto the query string: Gmail has no
@@ -113,8 +117,16 @@ def verdict(rows, outbound, drafts, filters_hit):
     return v
 
 
-def main():
-    svc = build_service()
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        prog="officehours_panel_watch.py",
+        description="Read-only sweep of the research-panel correspondence class "
+                    "against a live mailbox. Never sends, never writes.")
+    ap.add_argument("--creds", default=CREDS,
+                    help="path to the mailbox credentials JSON")
+    ap.add_argument("--json", action="store_true", help="machine-readable output")
+    args = ap.parse_args(argv)
+    svc = build_service(args.creds)
     rows = sweep(svc)
     q = " OR ".join("to:%s" % d for d in DOMAINS)
     outbound = [i for i in _pages(svc, q)]

@@ -76,9 +76,12 @@ def _resolve(dirs, fallback):
     return fallback
 
 
-LEDGER = os.path.join(_resolve(_CANDIDATE_DIRS, "/root/.hermes/commons/data/ocas-finch"),
-                      "task-list.json")
-JOURNALS = _resolve(_JOURNAL_DIRS, "/root/.hermes/commons/journals/ocas-finch")
+HERMES_HOME = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+LEDGER = os.path.join(
+    _resolve(_CANDIDATE_DIRS, os.path.join(HERMES_HOME, "commons", "data", "ocas-finch")),
+    "task-list.json")
+JOURNALS = _resolve(
+    _JOURNAL_DIRS, os.path.join(HERMES_HOME, "commons", "journals", "ocas-finch"))
 COUNTER = os.path.join(os.path.dirname(LEDGER), "scan-counter.json")
 LOCK = COUNTER + ".lock"
 

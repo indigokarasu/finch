@@ -11,11 +11,22 @@ Run: python3 test_hoorii_verify_watch.py   -> exits 0 on pass.
 """
 import importlib.util
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
 
-SRC = "hoorii_verify_watch.py"
+# --help must be answerable without running the suite, and SRC must resolve
+# from THIS FILE, not the caller's working directory: the script used to fail
+# with FileNotFoundError for anyone who ran it as `scripts/<name>.py` from the
+# repo root, which is exactly what the CI --help gate does.
+if "--help" in sys.argv or "-h" in sys.argv:
+    print(__doc__.strip())
+    print("Usage: test_hoorii_verify_watch.py   (no arguments; exit 0 = all checks pass)")
+    sys.exit(0)
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+SRC = os.path.join(_HERE, "hoorii_verify_watch.py")
 _spec = importlib.util.spec_from_file_location("hoorii_watch", SRC)
 if _spec is None or _spec.loader is None:
     print("FATAL: cannot load %s" % SRC)
@@ -80,7 +91,7 @@ for s in ["Backer Early Access: ClawStage Beta Is Now Open",
           "Re: Backer Early Access: ClawStage Beta Is Now Open",
           "Pledge manager confirmation for ClawStage"]:
     check("VERIFY_SUBJ does NOT match %r" % s[:34], not mod.VERIFY_SUBJ.search(s))
-check("vendor term matches hoorii", bool(mod.ANY_VENDOR.search("HooRii Console <console@hoorii.io>")))
+check("vendor term matches hoorii", bool(mod.ANY_VENDOR.search("HooRii Console <console@hoorii.io>")))  # pii-allow: fixture asserts on a real sender shape
 check("vendor term matches clawstage", bool(mod.ANY_VENDOR.search("ClawStage Beta")))
 check("vendor term ignores unrelated", not mod.ANY_VENDOR.search("Roche Workday DoNotReply"))
 
