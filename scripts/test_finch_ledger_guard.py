@@ -20,6 +20,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -216,11 +217,169 @@ def main():
             if not ok:
                 fails.append("case9 suite modified the live ledger")
     finally:
-        shutil.rmtree(tmpdir)
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
+    journal_cases()
     print("\n%s" % ("ALL CASES PASSED" if not fails
                     else "FAILURES:\n  " + "\n  ".join(fails)))
     return 0 if not fails else 1
+
+
+# =========================================================================
+# Journal self-stamp + namespace cases.
+#
+# These live in a FUNCTION, not at module level, because the ledger cases above
+# are wrapped in main() -- keeping the journal cases at module scope would make
+# them run on import, and a test module that acts on import is a trap.
+#
+# Ported from the pre-rewrite suite (which held them at module scope) so the
+# coverage survives the restructure; the fixtures are identical, only the
+# enclosing scope changed. A synthetic journal dir is used: the REAL journal
+# tree is never written to.
+# =========================================================================
+def journal_cases():
+    jtmp = tempfile.mkdtemp(prefix="journal_guard_test_")
+    ltmp = tempfile.mkdtemp(prefix="journal_guard_ledger_")
+    try:
+        # A SEPARATE, valid ledger for these cases. The original module-scope
+        # version reused the main fixture ledger, which no longer exists once
+        # the cases live in a function. It must be a real, CLEAN ledger, not
+        # os.devnull: the guard checks the ledger FIRST and exits 2 on an
+        # unreadable one, so passing /dev/null made every journal case
+        # report MISSED / FALSE POSITIVE while testing nothing. Seven
+        # consecutive green-to-red cases from one bad fixture argument.
+        jled = os.path.join(ltmp, "task-list.json")
+        save(jled, fixture())
+        os.chmod(jled, 0o644)
+
+        def mkjournal(name, payload, mtime_offset_s=0):
+            p = os.path.join(jtmp, name)
+            save(p, payload)
+            t = datetime.datetime.now(UTC).timestamp() - mtime_offset_s
+            os.utime(p, (t, t))
+            return p
+
+        def run_j(extra=()):
+            p = subprocess.run(
+                [sys.executable, GUARD, "--ledger", jled, "--journals", jtmp, *extra],
+                capture_output=True, text=True)
+            return p.returncode, p.stdout + p.stderr
+
+        past = (datetime.datetime.now(UTC) - datetime.timedelta(hours=3)
+                ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        fut = (datetime.datetime.now(UTC) + datetime.timedelta(hours=4)
+               ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # --- case 10: forward journal self-stamp must be CAUGHT (this is
+        # the whole point of the new check: the old glob 'scan-*.json' could
+        # not see it) --------------------------------------------------
+        mkjournal("scan-0100.json", {"scan_number": 900, "timestamp": past})
+        mkjournal("scan-0200.json", {"scan_number": 901, "timestamp": fut})
+        rc, out = run_j()
+        # Reported in the text, but the exit code stays 0: journal findings are
+        # not actionable by a writer and must not redden a clean ledger.
+        caught = "JOURNAL SELF-STAMP FORWARD" in out and "scan-0200.json" in out
+        print("[10] journal self-stamp    -> exit=%d %s"
+              % (rc, "CAUGHT" if caught else "*** MISSED ***"))
+        if not caught:
+            fails.append("case10 forward journal self-stamp not caught")
+        if rc != 0:
+            fails.append("case10 journal finding wrongly changed the exit code")
+
+        # --- case 11: clean journals must NOT be flagged -------------------
+        shutil.rmtree(jtmp)
+        os.makedirs(jtmp)
+        mkjournal("scan-0300.json", {"scan_number": 1, "timestamp": past})
+        mkjournal("scan-0400.json", {"scan_number": 2, "timestamp": past})
+        rc, out = run_j()
+        print("[11] clean journals        -> exit=%d %s"
+              % (rc, "CLEAN" if rc == 0 else "*** FALSE POSITIVE ***"))
+        if rc != 0:
+            fails.append("case11 false positive on clean journals")
+
+        # --- case 12: a work-* journal's scan_number must NOT break
+        # monotonicity -- work-*.json carries the scan it ran AGAINST, so #5
+        # between scan #4 and #6 is legitimate. The pre-fix code flagged this.
+        shutil.rmtree(jtmp)
+        os.makedirs(jtmp)
+        mkjournal("scan-0500.json", {"scan_number": 4, "timestamp": past}, 0)
+        mkjournal("work-0600.json", {"scan_number": 5, "source": "finch:work",
+                                    "timestamp": past}, 0)
+        mkjournal("scan-0700.json", {"scan_number": 6, "timestamp": past}, 0)
+        rc, out = run_j()
+        ok = rc == 0 and "NON-MONOTONIC" not in out
+        print("[12] work-* not a violation -> exit=%d %s"
+              % (rc, "OK" if ok else "*** FALSE POSITIVE ***"))
+        if not ok:
+            fails.append("case12 work-* scan_number misread as non-monotonic")
+
+        # --- case 13: genuine duplicate scan_number IS reported -----------
+        shutil.rmtree(jtmp)
+        os.makedirs(jtmp)
+        mkjournal("scan-0800.json", {"scan_number": 7, "timestamp": past}, 0)
+        mkjournal("scan-0900.json", {"scan_number": 7, "timestamp": past}, 60)
+        rc, out = run_j()
+        ok = rc == 0 and "DUPLICATE scan_number" in out and "7" in out
+        print("[13] duplicate scan_number -> exit=%d %s"
+              % (rc, "REPORTED" if ok else "*** MISSED ***"))
+        if not ok:
+            fails.append("case13 duplicate scan_number not reported")
+
+        # --- case 14: unreadable journal must not abort the measurement ---
+        shutil.rmtree(jtmp)
+        os.makedirs(jtmp)
+        mkjournal("scan-1000.json", {"scan_number": 8, "timestamp": past})
+        with open(os.path.join(jtmp, "scan-1100.json"), "w") as fh:
+            fh.write("{not json")
+        rc, out = run_j()
+        ok = rc == 0
+        print("[14] corrupt journal file  -> exit=%d %s"
+              % (rc, "SURVIVED" if ok else "*** CRASHED ***"))
+        if not ok:
+            fails.append("case14 corrupt journal broke measurement")
+
+        # --- case 15: offset-aware parsing (timestamps with -07:00) -------
+        shutil.rmtree(jtmp)
+        os.makedirs(jtmp)
+        off = (datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=-7)))
+               - datetime.timedelta(hours=3)).isoformat()
+        mkjournal("scan-1200.json", {"scan_number": 9, "timestamp": off})
+        rc, out = run_j()
+        print("[15] offset-aware stamp    -> exit=%d %s"
+              % (rc, "CLEAN" if rc == 0 else "*** FALSE POSITIVE ***"))
+        if rc != 0:
+            fails.append("case15 offset timestamp misparsed")
+
+        # --- case 16: a journal carrying MORE THAN ONE prose number -------
+        # The [COVERAGE] count used re.search, which returns only the FIRST
+        # prose number in a document. 2026-09-21/scan-93.json holds both 91
+        # and 93, so 91 was invisible and the unrecoverable count
+        # OVER-REPORTED by one. Pin the multi-number harvest.
+        #
+        # The unrecoverable range runs from the lowest to the highest
+        # STRUCTURAL scan_number, so the fixture needs two of those to span
+        # the prose numbers -- with only one, the range collapses and the case
+        # proves nothing.
+        shutil.rmtree(jtmp)
+        os.makedirs(jtmp)
+        mkjournal("scan-2000.json", {"scan_number": 10, "timestamp": past}, 0)
+        mkjournal("scan-2050.json", {"scan_number": 14, "timestamp": past}, 0)
+        mkjournal("scan-2100.json",
+                  {"timestamp": past, "run": "finch:scan #11 and again finch:scan #12"}, 0)
+        rc, out = run_j()
+        m = re.search(r"(\d+) allocated number\(s\) left no recoverable trace", out)
+        got = int(m.group(1)) if m else None
+        # Range 10..14. Structural: 10, 14. Prose (2 numbers, both must
+        # count): 11, 12. Unseen: 13 alone -> exactly 1 unrecoverable. The
+        # pre-fix search-only code harvested 11 and dropped 12, reporting 2.
+        ok = rc == 0 and got == 1
+        print("[16] multi-prose-number    -> exit=%d unrecoverable=%s %s"
+              % (rc, got, "OK" if ok else "*** WRONG ***"))
+        if not ok:
+            fails.append("case16 only the first prose number was harvested (got %s, want 1)" % got)
+    finally:
+        shutil.rmtree(jtmp, ignore_errors=True)
+        shutil.rmtree(ltmp, ignore_errors=True)
 
 
 if __name__ == "__main__":

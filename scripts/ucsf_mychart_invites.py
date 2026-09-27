@@ -68,20 +68,47 @@ def _require_google():
 CRED_DIR = Path(os.path.expanduser(
     os.environ.get("OCAS_GOOGLE_CRED_DIR", "~/.google_workspace_mcp/credentials")))
 
-# The health system's own notification addresses. These are a THIRD PARTY's
-# service endpoints, not a person, but they are still account-specific, so they
-# come from the environment rather than being committed as literals. Point
-# these at your provider's real senders.
-NOTIFY = os.environ.get("CARE_NOTIFY_ADDR", "donotreply+mychart@example.com")
-BILLING = os.environ.get("CARE_BILLING_ADDR", "donotreply+billing@example.com")
+# The health system's notification DOMAINS. Env-overridable, never literals: the
+# operator's own provider must not be committed to a public repo.
+#
+# DOMAINS, not a single sender address, and that is a structural fact rather than
+# a style choice: one health system publishes from SEVERAL senders -- portal
+# notices and billing notices differ (`...mychart@` vs a plain `...@`) -- so an
+# address-shaped variable cannot cover a portal, only the part of it that happens
+# to use one mailbox. The sibling watchers already scope this way
+# (elcamino_link_watch.py::$ELCAMINO_DOMAINS, hoorii_verify_watch.py::$VENDOR_DOMAINS);
+# this one was the odd member of the family.
+#
+# GOTCHA (finch:work #202, 2026-09-27): the previous shape was
+# $CARE_NOTIFY_ADDR + a $CARE_BILLING_ADDR that was DEFINED, demanded by the
+# fatal message, and never read by a single query -- and because NO job, env
+# file, or config supplied the address, the script could not run at all: the
+# fail-loud guard added the day before returned exit 4 on every invocation,
+# including the exact environment a scheduler would give it. A guard that can
+# never be satisfied is not a guard, it is a wall; it turned a misconfiguration
+# into an unusable script while still looking correct in review.
+NOTIFY_DOMAINS = [d.strip() for d in os.environ.get(
+    "CARE_NOTIFY_DOMAINS", "").split(",") if d.strip()]
 INVITE_SUBJ = "New Invitation to Schedule an Appointment"
 SUMMARY_SUBJ = "New After Visit Summary Available"
 FOLLOWUP = "Follow-up|follow up|Follow Up"
 
-# The example.com defaults are PLACEHOLDERS. A run that leaves them in place
-# queries a domain that cannot exist, matches nothing, and prints a confident
-# "Outstanding invites: NONE" with EXIT 0. main() refuses to run in that state.
+# The unset default is a PLACEHOLDER. A run that queries nothing matches
+# nothing, prints a confident "Outstanding invites: NONE" with EXIT 0 -- and a
+# silently-empty result is the SAME output a healthy mailbox produces. So an
+# unconfigured run is a non-zero exit, not a footnote.
 UNCONFIGURED_MARKER = "example.com"
+
+
+def from_clause():
+    """Build the Gmail FROM scope from the configured domains.
+
+    `from:(a.org OR b.org)` is an explicit alternation, so a domain containing
+    regex metacharacters is passed as a literal alternative rather than being
+    interpreted as a pattern. One sender vs several is one shape, which is what
+    keeps a second portal mailbox from needing a second code path.
+    """
+    return "from:{%s}" % " OR ".join(NOTIFY_DOMAINS)
 
 
 def _cue_pattern():
@@ -192,10 +219,20 @@ def main():
     # (finch:work #199, 2026-09-26: verified -- the default invocation returned
     # "Outstanding invites: NONE" and 4 bogus care events while 2 real invites
     # were open and 1 real confirmation existed.)
-    if UNCONFIGURED_MARKER in NOTIFY.lower():
-        print("FATAL: the portal sender is still the example.com placeholder. Set "
-              "$CARE_NOTIFY_ADDR (and $CARE_BILLING_ADDR) to the real senders, or "
-              "pass the correct addresses, then re-run. Refusing to report a "
+    # Fail loud when NO portal scope is configured. `from:` with an empty value
+    # matches nothing, which prints a confident "Outstanding invites: NONE" with
+    # EXIT 0 -- byte-identical to a genuinely clean mailbox. That is the
+    # false-clean failure mode, so it is a non-zero exit, not a footnote.
+    # (finch:work #199, 2026-09-26: verified -- the default invocation returned
+    # "Outstanding invites: NONE" and 4 bogus care events while 2 real invites
+    # were open and 1 real confirmation existed. finch:work #202, 2026-09-27:
+    # the same guard is now satisfiable -- $CARE_NOTIFY_DOMAINS defaults to empty
+    # rather than to a placeholder address that could never be configured
+    # correctly, and a real run with it set returns 0.)
+    if not NOTIFY_DOMAINS or any(UNCONFIGURED_MARKER in d.lower() for d in NOTIFY_DOMAINS):
+        print("FATAL: no portal sender scope is configured. Set "
+              "$CARE_NOTIFY_DOMAINS to a comma-separated list of the health "
+              "system's notification domains, then re-run. Refusing to report a "
               "possibly-empty mailbox.", file=sys.stderr)
         return 4
     _require_google()
@@ -206,8 +243,9 @@ def main():
     out = {"account": args.acct, "invites": [], "summaries": [], "confirmations": [],
            "portal_filter": None, "booked_care_events": [], "notes": []}
 
+    fromscope = from_clause()
     # 1. Outstanding invites, newest first.
-    q = f"from:{NOTIFY} subject:\"{INVITE_SUBJ}\" newer_than:{args.days}d"
+    q = f'{fromscope} subject:"{INVITE_SUBJ}" newer_than:{args.days}d'
     for item in gmail.users().messages().list(
             userId="me", q=q, maxResults=25).execute().get("messages", []):
         m = gmail.users().messages().get(
@@ -223,7 +261,7 @@ def main():
     # reason unrelated to scheduling, so they are counted separately -- a
     # "portal is clear" verdict that silently folds them into the invite count
     # understates what Jared has not yet read.
-    q = f"from:{NOTIFY} subject:\"{SUMMARY_SUBJ}\" newer_than:{args.days}d"
+    q = f'{fromscope} subject:"{SUMMARY_SUBJ}" newer_than:{args.days}d'
     for item in gmail.users().messages().list(
             userId="me", q=q, maxResults=25).execute().get("messages", []):
         m = gmail.users().messages().get(userId="me", id=item["id"], format="full").execute()
@@ -241,7 +279,7 @@ def main():
             "names no clinic, specialty, or provider.")
 
     # 2. Did any invite convert into a booked appointment?
-    q = f'from:{NOTIFY} subject:"Appointment Confirmation" newer_than:{args.days}d'
+    q = f'{fromscope} subject:"Appointment Confirmation" newer_than:{args.days}d'
     for item in gmail.users().messages().list(
             userId="me", q=q, maxResults=15).execute().get("messages", []):
         m = gmail.users().messages().get(userId="me", id=item["id"], format="full").execute()
@@ -279,17 +317,19 @@ def main():
             "layout changed, so do NOT read the null fields as 'no provider named'.")
 
     # 3. Is a filter auto-archiving the portal's mail? Distinguishes "the
-    #    operator missed it" from "the mailbox hid it" — the two demand
-    #    different responses.
+    #    the operator missed it" from "the mailbox hid it" — the two demand
+    #    different responses. Matched on DOMAIN, not on the one address a
+    #    single-sender variable would have pinned: a filter that shadows the
+    #    billing mailbox but not the portal mailbox is still a shadow.
     try:
         filters = gmail.users().settings().filters().list(userId="me").execute().get("filter", [])
-        for f in filters:
-            if NOTIFY.split("@")[-1].lower() in json.dumps(f).lower():
-                out["portal_filter"] = f
-                break
+        shadowed = [fl for fl in filters
+                    if any(d.lower() in json.dumps(fl).lower() for d in NOTIFY_DOMAINS)]
+        if shadowed:
+            out["portal_filter"] = shadowed[0]
         if out["portal_filter"] is None:
             out["notes"].append(
-                "No Gmail filter references the portal sender — archived invites were "
+                "No Gmail filter references the portal domain — archived invites were "
                 "dismissed in a client, not auto-archived by a rule.")
     except Exception as e:  # settings scope may be absent
         out["notes"].append(f"filter check unavailable: {e}")
@@ -310,8 +350,8 @@ def main():
 
     # 5. Standing guidance, so no downstream agent re-derives it.
     out["notes"].append(
-        f"{NOTIFY} is a DO-NOT-REPLY address: these notices cannot be "
-        "answered by email. Booking is in MyChart (web/app) or by phone.")
+        f"Portal scope {', '.join(NOTIFY_DOMAINS)} is DO-NOT-REPLY: these notices "
+        "cannot be answered by email. Booking is in MyChart (web/app) or by phone.")
     out["notes"].append(
         "Invite bodies name no clinic, specialty, or reason — the request "
         "content exists only inside MyChart, so an email-side check can report "
