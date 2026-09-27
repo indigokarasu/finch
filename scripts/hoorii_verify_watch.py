@@ -35,6 +35,8 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
+from ocas_mailbox import resolve_account
+
 MIN_TS = datetime.min.replace(tzinfo=timezone.utc)
 
 CRED_DIR = Path(os.path.expanduser(
@@ -117,14 +119,21 @@ def _visibility(labels):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--acct", default=os.environ.get("OCAS_OPERATOR_EMAIL", ""),
-                    help="mailbox whose token file is read (default: $OCAS_OPERATOR_EMAIL)")
+    ap.add_argument("--acct", default=resolve_account(),
+                    help=("mailbox whose token file is read. Default resolves in this "
+                          "order: $OCAS_OPERATOR_EMAIL, then the credential dir's "
+                          "operator_email.json symlink, then a lone token file. The "
+                          "env var is NOT required -- the cron worker does not export "
+                          "it, so requiring it made this watcher UNRUNNABLE from the "
+                          "worker whose job is to run it (finch:work #225)."))
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--cal-days", type=int, default=400,
                     help="calendar lookback for vendor residue")
     args = ap.parse_args()
     if not args.acct:
-        print("FATAL: pass --acct <email> or set $OCAS_OPERATOR_EMAIL", file=sys.stderr)
+        print("FATAL: no mailbox resolvable. Pass --acct <email>, set "
+              "$OCAS_OPERATOR_EMAIL, or provide $OCAS_GOOGLE_CRED_DIR/operator_email.json",
+              file=sys.stderr)
         return 2
     Credentials, build = _require_google()
 
