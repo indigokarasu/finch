@@ -1,0 +1,58 @@
+#!/bin/sh
+# pre-commit — refuse to publish personal data.
+#
+# WHY THIS EXISTS: the auto-sync commits with `git add -A`, which stages
+# whatever the working tree holds. The working tree holds live operational
+# watchers written for this host, so on 2026-09-26 and again on 2026-09-27 a
+# host filesystem root, a concrete profile name and the operator's mailbox
+# address were committed to a PUBLIC repo, and CI caught it after the push.
+#
+# `.gitignore` narrows the blast radius but a denylist of filenames cannot know
+# about a file that does not exist yet. The scanner can, and it is the same
+# scanner CI runs -- so this is the local half of a gate that is already
+# authoritative on the remote.
+#
+# STAGED FILES ONLY, on purpose: a leak in a file that is not going to be
+# published is not a leak, and a local-only watcher full of host paths should
+# not block every commit forever (that is what the .gitignore allow-list is for).
+set -e
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+# Refuse a --no-verify bypass silently: a bypass is how a leak ships.
+if [ -n "$SKIP_PII_GATE" ]; then
+    echo "pre-commit: SKIP_PII_GATE set — PII gate bypassed by explicit request" >&2
+    exit 0
+fi
+
+staged=$(git diff --cached --name-only --diff-filter=ACM | grep -v '^\.pii-denylist$' || true)
+
+if [ -z "$staged" ]; then
+    exit 0
+fi
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+trap 'rm -rf "$tmp"; exit 1' HUP INT TERM
+
+failed=0
+for f in $staged; do
+    [ -f "$f" ] || continue
+    mkdir -p "$tmp/$(dirname "$f")"
+    git show ":$f" > "$tmp/$f" 2>/dev/null || continue
+done
+
+# The scanner takes a path and walks it; a temp tree holding only the staged
+# snapshot is exactly the "what would this commit publish?" question.
+if [ -n "$(ls -A "$tmp" 2>/dev/null)" ]; then
+    if ! python3 scripts/check_no_pii.py --path "$tmp" --quiet; then
+        echo "" >&2
+        echo "pre-commit: the staged snapshot contains personal data." >&2
+        echo "Genericise it, or gitignore the file if it is host-local." >&2
+        echo "See references/reference-file-workflow.md." >&2
+        failed=1
+    fi
+fi
+
+exit $failed
