@@ -50,18 +50,50 @@ import re
 import sys
 from collections import Counter
 
-# Resolve the ledger from the script's own location, not a hardcoded host path.
-# .../profiles/<name>/skills/<skill>/scripts/ -> walk up to the profile root.
+# Resolve the ledger from the environment or the script's own location -- never
+# from a hardcoded host path. A committed absolute path is both a PII leak (this
+# repo is public) and wrong on every machine but the author's.
+#
+#   FINCH_LEDGER   explicit ledger override, wins over everything
+#   HERMES_ROOT / HERMES_HOME   the install root, same as the rest of this repo
+#   fallback       walk up from the script: <install>/profiles/<name>/skills/
+#                  <skill>/scripts/ -> the profile root holding commons/
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_LEGACY = "/root/.hermes/commons/data/ocas-finch/task-list.json"
-_CANDIDATE_DIRS = [
-    os.path.join(_HERE, "..", "..", "..", "commons", "data", "ocas-finch"),
-    os.path.join(_HERE, "..", "..", "..", "..", "commons", "data", "ocas-finch"),
-]
-_JOURNAL_DIRS = [
-    os.path.join(_HERE, "..", "..", "..", "commons", "journals", "ocas-finch"),
-    os.path.join(_HERE, "..", "..", "..", "..", "commons", "journals", "ocas-finch"),
-]
+
+
+def _hermes_roots():
+    """Candidate install roots, most explicit first. Empty when none is set."""
+    roots = []
+    for var in ("HERMES_ROOT", "HERMES_HOME"):
+        val = os.environ.get(var)
+        if val:
+            roots.append(os.path.expanduser(val))
+    return roots
+
+
+def _under(root, *parts):
+    return os.path.join(root, *parts)
+
+
+_CANDIDATE_DIRS = (
+    [d for r in _hermes_roots()
+     for d in (_under(r, "commons", "data", "ocas-finch"),
+               _under(r, "profiles", os.environ.get("HERMES_PROFILE", ""), "commons",
+                      "data", "ocas-finch") if os.environ.get("HERMES_PROFILE") else None)]
+    + [_under(_HERE, "..", "..", "..", "commons", "data", "ocas-finch"),
+       _under(_HERE, "..", "..", "..", "..", "commons", "data", "ocas-finch")]
+)
+_CANDIDATE_DIRS = [d for d in _CANDIDATE_DIRS if d]
+
+_JOURNAL_DIRS = (
+    [d for r in _hermes_roots()
+     for d in (_under(r, "commons", "journals", "ocas-finch"),
+               _under(r, "profiles", os.environ.get("HERMES_PROFILE", ""), "commons",
+                      "journals", "ocas-finch") if os.environ.get("HERMES_PROFILE") else None)]
+    + [_under(_HERE, "..", "..", "..", "commons", "journals", "ocas-finch"),
+       _under(_HERE, "..", "..", "..", "..", "commons", "journals", "ocas-finch")]
+)
+_JOURNAL_DIRS = [d for d in _JOURNAL_DIRS if d]
 
 UTC = datetime.timezone.utc
 TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
@@ -78,6 +110,12 @@ def _resolve(dirs, extra=None):
         if c and os.path.isdir(c):
             return os.path.abspath(c)
     return None
+
+
+def _env_ledger():
+    """An explicit FINCH_LEDGER override, expanded. None when unset."""
+    val = os.environ.get("FINCH_LEDGER")
+    return os.path.expanduser(val) if val else None
 
 
 def _parse(v):
@@ -101,8 +139,13 @@ def check(ledger_path=None, journal_dir=None):
     path = ledger_path
     if path is None:
         d = _resolve(_CANDIDATE_DIRS)
-        path = os.path.join(d, "task-list.json") if d else _LEGACY
+        path = _env_ledger() or (os.path.join(d, "task-list.json") if d else None)
     rep["ledger"] = path
+
+    if path is None:
+        rep["ledger_error"] = ("no ledger resolvable -- set FINCH_LEDGER or "
+                               "HERMES_ROOT, or pass --ledger")
+        return rep
 
     try:
         with open(path) as fh:
@@ -262,7 +305,8 @@ def main():
     rep = check(a.ledger, a.journals)
 
     if not rep["ledger_found"]:
-        msg = "LEDGER UNREADABLE: %s (%s)" % (rep["ledger"], rep["ledger_error"])
+        where = rep["ledger"] or "<none resolvable>"
+        msg = "LEDGER UNREADABLE: %s (%s)" % (where, rep["ledger_error"])
         print(json.dumps({"error": msg, "report": rep}, indent=2) if a.json else msg)
         return 2
 
