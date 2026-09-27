@@ -44,9 +44,12 @@ def _default_profile() -> str:
 
 
 PROFILE = os.environ.get("HERMES_PROFILE_NAME") or _default_profile()
-PROFILE_HOME = Path(os.environ.get("HERMES_PROFILE_HOME") or f"~/.hermes/profiles/{PROFILE}")
+HERMES_HOME = Path(os.environ.get("HERMES_HOME")
+                   or Path(os.path.expanduser("~")) / ".hermes")
+PROFILE_HOME = Path(os.environ.get("HERMES_PROFILE_HOME")
+                    or HERMES_HOME / "profiles" / PROFILE)
 # The multiplex host gateway lives at the ROOT Hermes home, not the profile home.
-HOST_HOME = Path(os.environ.get("HERMES_HOST_HOME") or "~/.hermes")
+HOST_HOME = Path(os.environ.get("HERMES_HOST_HOME") or HERMES_HOME)
 HOST_STATE = HOST_HOME / "gateway_state.json"
 HOST_LOG = HOST_HOME / "logs" / "gateway.log"
 
