@@ -40,6 +40,37 @@ EXIT CODES
     1  LEDGER forward stamps present and not repaired
     2  ledger unreadable / not JSON
 
+THE MTIME-LAUNDERING BLIND SPOT (fixed 2026-09-27, finch:work #204)
+---------------------------------------------------------------------
+This guard compares each stamp to the file's CURRENT mtime. That reference is
+itself an artifact of the file, so a LATER write launders an EARLIER violation:
+
+    finch:work #203 wrote the ledger at 07:39:45Z stamping fields 07:50:00Z
+      -> forward by +615s, real violation, guard exit 1 (measured 07:58Z)
+    finch:scan #956 then rewrote the SAME ledger at 07:58:25Z, copying the
+    07:50:00Z values through unchanged
+      -> mtime is now 8m40s PAST the stamp, so the same bytes read as clean
+      -> guard exit 0. The defect was never repaired; it was made invisible
+         by the very pass that ran this guard.
+
+Proven, not assumed: the live file and a copy of it with its mtime set back to
+07:39:45Z are BYTE-IDENTICAL and hold the same 07:50:00Z strings, yet the copy
+reports 25 forward stamps and the live file reports 0. The only difference is
+the mtime. See finch:work #204's work log.
+
+The fix is a RECEIPT: an append-only `<ledger>.guard-receipts.jsonl` recording,
+for every run, the mtime observed, the sha256 of the exact bytes read, and
+every forward stamp found. A later run replays the receipts and reports a
+stamp LAUNDERED when the same (id, field, value) is still in the file, was
+flagged against an EARLIER mtime, and was never changed since -- which is the
+signature of a rewrite that copied the stamp through instead of repairing it.
+
+This finding is NOT the historical-journal class below. A laundered stamp has a
+repair path (`--repair` clamps it, the value changes, the receipt retires), so
+it earns exit 1 and clears on its own. Journal self-stamps have no repair path
+at all, so exit-coding them would pin a clean ledger at non-zero forever. The
+distinction is not convenience: it is whether a writer can do anything about it.
+
 WHAT JOURNAL FINDINGS DO *NOT* DO TO THE EXIT CODE
 --------------------------------------------------
 The journal self-stamp check (added 2026-09-26) reports 24 of 275 action
@@ -59,6 +90,7 @@ the report; an action claim belongs in the exit code.
 import argparse
 import datetime
 import glob
+import hashlib
 import json
 import os
 import re
@@ -180,6 +212,7 @@ def check(ledger_path=None, journal_dir=None):
     mtu = datetime.datetime.fromtimestamp(mt, UTC)
     rep["mtime_utc"] = mtu.isoformat()
     rep["ledger_clock_measured"] = True
+    rep["sha256"] = _file_sha256(path)
 
     # --- header fields -----------------------------------------------------
     for k in HEADER_FIELDS:
@@ -207,10 +240,167 @@ def check(ledger_path=None, journal_dir=None):
     rep["forward_count"] = sum(1 for h in rep["header"] if h["forward"]) \
         + len(rep["task_fields"])
 
+    # --- laundered stamps (mtime moved past an unrepaired violation) --------
+    # Runs BEFORE the receipt is appended, so a run never launders itself.
+    rep["laundered"], rep["launder_meta"] = laundered_stamps(rep)
+    rep["laundered_count"] = len(rep["laundered"])
+
     # --- journal coherence -------------------------------------------------
     rep["journals"] = _journal_coherence(journal_dir)
     rep["journals_measured"] = bool(rep["journals"].get("measured"))
     return rep
+
+
+# ---------------------------------------------------------------------------
+# RECEIPTS -- the witness that survives the mtime laundering (#204)
+# ---------------------------------------------------------------------------
+# Without this, the ONLY record of a violation is the exit code of a run whose
+# reference clock is the very file it is judging. A later write moves that
+# reference and the violation stops being visible, so the defect is repaired by
+# nothing and closed by nothing. The receipt is that record: append-only, so no
+# later pass can silently rewrite it, and it stores the mtime the run actually
+# judged against rather than re-deriving one.
+#
+#   sha256 -- binds the receipt to the exact bytes that were read. Without it a
+#             receipt could be attributed to a file that never held those
+#             stamps, which is precisely the false-completion direction.
+#   delta_s -- the violation's size at the moment it was caught, so a later run
+#             can show the ORIGINAL magnitude even though the stamp now looks
+#             backward relative to the current mtime.
+
+
+def _receipt_path(ledger_path):
+    return ledger_path + ".guard-receipts.jsonl"
+
+
+def _file_sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _stamp_key(scope, ident, field, value):
+    """Identity of a single stamped value, independent of the file's mtime."""
+    return "%s|%s|%s|%s" % (scope, ident, field, value)
+
+
+def append_receipt(rep):
+    """Append one receipt line for this run. Never raises into the caller.
+
+    A failure to write the receipt must not change the guard's verdict -- but it
+    IS reported, because silently losing the witness is how this blind spot
+    came back. That is the same rule as the exit code: report what a writer can
+    act on, act on nothing silently.
+    """
+    path = _receipt_path(rep["ledger"])
+    forward = ([{"scope": "header", "id": "-", "field": h["field"],
+                 "value": h["value"], "delta_s": h["delta_s"]}
+                for h in rep["header"] if h["forward"]]
+               + [{"scope": "task", "id": t["id"], "field": t["field"],
+                   "value": t["value"], "delta_s": t["delta_s"]}
+                  for t in rep["task_fields"]])
+    line = {
+        "at": rep["now_utc"],
+        "ledger_sha256": rep.get("sha256"),
+        "mtime_utc": rep["mtime_utc"],
+        "forward": forward,
+        "forward_count": len(forward),
+    }
+    try:
+        with open(path, "a") as fh:
+            fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+        return None
+    except OSError as e:
+        return "receipt append failed: %s" % e
+
+
+def read_receipts(ledger_path):
+    """All receipts, oldest first. Unparseable lines are skipped and counted."""
+    path = _receipt_path(ledger_path)
+    out, bad = [], 0
+    if not os.path.exists(path):
+        return out, bad
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                bad += 1
+    return out, bad
+
+
+def laundered_stamps(rep):
+    """Stamps a LATER write made invisible by advancing the file's mtime.
+
+    A stamp is LAUNDERED when all three hold:
+      1. a receipt recorded it forward against some mtime M;
+      2. M is EARLIER than the current mtime -- otherwise it is still
+         forward and the ordinary check already caught it;
+      3. the exact same value is STILL in the file, unchanged, right now.
+
+    (3) is what makes this safe. A stamp that was genuinely repaired changes
+    value, so it retires its receipt. A stamp that was merely overwritten by a
+    newer, honest pass also changes value. Only one that a later pass copied
+    THROUGH verbatim -- repairing nothing -- keeps matching.
+    """
+    receipts, bad = read_receipts(rep["ledger"])
+    if not receipts:
+        return [], {"receipts": 0, "unparseable": bad, "receipt_path": _receipt_path(rep["ledger"])}
+
+    try:
+        cur_mt = datetime.datetime.fromisoformat(rep["mtime_utc"])
+    except (TypeError, ValueError):
+        return [], {"receipts": len(receipts), "unparseable": bad,
+                    "receipt_path": _receipt_path(rep["ledger"])}
+
+    # Current value of every stamp in the file, keyed the same way.
+    present = {}
+    for h in rep["header"]:
+        present[_stamp_key("header", "-", h["field"], h["value"])] = True
+    for t in rep["task_fields"]:
+        present[_stamp_key("task", t["id"], t["field"], t["value"])] = True
+
+    # Receipts only see FORWARD stamps (that is all they record), so a stamp
+    # currently forward is in `present` only if it is in rep["task_fields"].
+    # For the header, rep["header"] holds every parsed header field, forward or
+    # not, so both branches are covered by the same loop above.
+    with open(rep["ledger"]) as fh:
+        doc = json.load(fh)
+    for k in HEADER_FIELDS:
+        v = doc.get(k)
+        if isinstance(v, str):
+            present.setdefault(_stamp_key("header", "-", k, v), True)
+    for task in doc.get("tasks", []) or []:
+        for k in TASK_FIELDS:
+            v = task.get(k)
+            if isinstance(v, str):
+                present.setdefault(_stamp_key("task", task.get("id", "<no-id>"), k, v), True)
+
+    hits, seen = [], set()
+    for r in receipts:
+        try:
+            rmt = datetime.datetime.fromisoformat(r["mtime_utc"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if rmt >= cur_mt:
+            continue  # measured against this same mtime: ordinary check owns it
+        for f in r.get("forward", []):
+            key = _stamp_key(f.get("scope"), f.get("id"), f.get("field"), f.get("value"))
+            if key in present and key not in seen:
+                seen.add(key)
+                hits.append({"id": f.get("id"), "field": f.get("field"),
+                             "value": f.get("value"),
+                             "flagged_at_mtime": r["mtime_utc"],
+                             "flagged_by": r.get("at"),
+                             "original_delta_s": f.get("delta_s"),
+                             "laundered_by_s": round((cur_mt - rmt).total_seconds(), 1)})
+    return hits, {"receipts": len(receipts), "unparseable": bad,
+                  "receipt_path": _receipt_path(rep["ledger"])}
 
 
 # Journal self-timestamp keys, in priority order. A journal names the moment it
@@ -459,6 +649,47 @@ def repair(path, dry_run=False):
     return changes, doc
 
 
+def _repair_laundered(path, hit, dry_run=False):
+    """Clamp a LAUNDERED stamp down to the mtime its receipt recorded.
+
+    The ordinary clamp uses the CURRENT mtime, which for a laundered stamp is
+    already later than the value -- so it would be a no-op. The receipt's
+    mtime is the correct bound: it is the last moment the content is known to
+    have been self-consistent. The "(finch:...)" suffix on last_finch_review is
+    preserved exactly as the forward clamp preserves it.
+    """
+    with open(path) as fh:
+        doc = json.load(fh)
+    try:
+        bound = datetime.datetime.fromisoformat(hit["flagged_at_mtime"])
+    except (TypeError, ValueError):
+        return [], doc
+    stamp = bound.strftime("%Y-%m-%dT%H:%M:%SZ")
+    changes = []
+
+    if hit["id"] == "-" and hit["field"] in doc and doc[hit["field"]] == hit["value"]:
+        changes.append({"scope": "header", "id": "-", "field": hit["field"],
+                        "from": hit["value"], "to": stamp,
+                        "delta_s": 0.0, "note": "laundered"})
+        doc[hit["field"]] = stamp
+    else:
+        for task in doc.get("tasks", []) or []:
+            if task.get("id") != hit["id"]:
+                continue
+            if task.get(hit["field"]) != hit["value"]:
+                continue
+            suffix = ""
+            if isinstance(task[hit["field"]], str):
+                m = re.search(r"(\s*\(finch:.*\))\s*$", task[hit["field"]])
+                if m:
+                    suffix = m.group(1)
+            changes.append({"scope": "task", "id": hit["id"], "field": hit["field"],
+                            "from": hit["value"], "to": stamp + suffix,
+                            "delta_s": 0.0, "note": "laundered"})
+            task[hit["field"]] = stamp + suffix
+    return changes, doc
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", action="store_true", help="machine-readable report")
@@ -478,15 +709,34 @@ def main():
         return 2
 
     repaired = []
-    if a.repair and rep["forward_count"]:
+    if a.repair and (rep["forward_count"] or rep["laundered_count"]):
         path = rep["ledger"]
+        # A laundered stamp is already BACKWARD against the current mtime, so
+        # the existing clamp (which only touches forward stamps) would skip it
+        # and the repair would look like it ran and did nothing. Clamp to the
+        # receipt's own flagged mtime instead: that is the latest instant the
+        # content is known to have been clean.
         changes, _ = repair(path, dry_run=a.dry_run)
         repaired = changes
+        for l in rep["laundered"]:
+            path_l = rep["ledger"]
+            changes_l, doc_l = _repair_laundered(path_l, l, dry_run=a.dry_run)
+            repaired.extend(changes_l)
+            if not a.dry_run and changes_l:
+                with open(path_l, "w") as fh:
+                    json.dump(doc_l, fh, indent=2, ensure_ascii=False)
+                    fh.write("\n")
         if not a.dry_run:
             rep = check(path, a.journals)   # re-measure, do not assume
+        else:
+            print("   [dry-run] %d laundered stamp(s) would be clamped"
+                  % len(rep["laundered"]))
+
+    receipt_err = append_receipt(rep)
 
     if a.json:
-        print(json.dumps({"report": rep, "repairs": repaired}, indent=2))
+        print(json.dumps({"report": rep, "repairs": repaired,
+                          "receipt_error": receipt_err}, indent=2))
     else:
         print("ledger      : %s" % rep["ledger"])
         print("mtime (UTC) : %s" % rep["mtime_utc"])
@@ -500,6 +750,24 @@ def main():
         for t in rep["task_fields"]:
             print("   FORWARD  %-44s %-18s %s  (+%.0fs)"
                   % (t["id"], t["field"], t["value"], t["delta_s"]))
+        lm = rep.get("launder_meta", {})
+        if rep["laundered"]:
+            print("\nLAUNDERED  %d stamp(s) a later write made invisible by advancing"
+                  " the file mtime" % len(rep["laundered"]))
+            for l in rep["laundered"]:
+                print("   LAUNDERED %-40s %-18s %s" % (l["id"], l["field"], l["value"]))
+                print("            was +%.0fs vs mtime %s; mtime has since advanced"
+                      " +%.0fs and the value is STILL unchanged in the file"
+                      % (l.get("original_delta_s") or 0,
+                         l["flagged_at_mtime"], l["laundered_by_s"]))
+            print("   Repairable: --repair clamps it to the receipt's mtime, which"
+                  " changes the value and retires the receipt.")
+        if lm:
+            print("receipts    : %d recorded, %d unparseable  (%s)"
+                  % (lm.get("receipts", 0), lm.get("unparseable", 0),
+                     lm.get("receipt_path", "?")))
+        if receipt_err:
+            print("receipt_err : %s" % receipt_err)
         j = rep["journals"]
         if not j.get("measured"):
             print("\njournals    : %s" % j.get("note"))
@@ -555,16 +823,25 @@ def main():
               if rep["journals"].get("measured") else 0)
         if rep["forward_count"]:
             print("\nVERDICT: %d LEDGER FORWARD STAMP(S) PRESENT" % rep["forward_count"])
+        elif rep.get("laundered_count"):
+            print("\nVERDICT: %d LAUNDERED LEDGER STAMP(S) PRESENT -- previously"
+                  " forward, unrepaired, and now hidden by an advanced mtime"
+                  % rep["laundered_count"])
         elif jf:
             print("\nVERDICT: LEDGER CLEAN; %d JOURNAL SELF-STAMP(S) PRESENT"
                   " (historical, not written by this run)" % jf)
         else:
             print("\nVERDICT: CLEAN")
-    # The EXIT CODE answers only "must a writer act on the ledger?". Journal
+    # The EXIT CODE answers only "must a writer act on the ledger?" Journal
     # self-stamps are historical with no repair path, so they are reported but
     # never change the code -- otherwise a clean ledger stays non-zero forever
     # and callers stop reading the code at all.
-    return 0 if rep["forward_count"] == 0 else 1
+    #
+    # A LAUNDERED stamp does change the code (#204). Unlike a journal self-stamp
+    # it is still sitting in the file, still wrong, and --repair can clamp it,
+    # at which point the value changes and the receipt retires. A clean ledger
+    # therefore still returns 0, which is the property cases 4/5 pin.
+    return 0 if (rep["forward_count"] == 0 and rep.get("laundered_count", 0) == 0) else 1
 
 
 if __name__ == "__main__":
