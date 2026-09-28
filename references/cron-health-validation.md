@@ -61,6 +61,50 @@ for j in sorted(error_jobs, key=lambda x: str(x.get("consecutive_failures", 0)),
     print(f"  {jid}  cf={cf}  state={st}  {name}\n      |_ {err}")
 ```
 
+## `blocked_config` is INVISIBLE to a `last_status == "error"` gate (proven live 2026-09-27)
+
+A preflight block is a DIFFERENT status from `error`, and the registry
+under-reports it. Proven live on a production profile: 156 jobs,
+`last_status=error` count **0**, while **5** jobs had written
+`**Status:** BLOCKED (configuration)` run files into `cron/output/<id>/`
+within 72h — and **3 of those 5 were stamped `last_status: ok`**. A job that
+never ran reads green. Sweeping only for `error` reports health for a job
+that produced nothing.
+
+Enumerate the evidence layer every pass, not just `error`:
+
+```bash
+python3 scripts/finch_blocked_config_watch.py --hours 72 --json
+```
+
+- It requires the `**Status:** BLOCKED (configuration)` LINE. Do NOT match a
+  bare `blocked_config` substring: reports that merely *quote* the token (a
+  cron-health custodian WARNING about another job, a
+  `paused_blocked_config_jobs` stats key) match that way and produce false
+  positives. Requiring the line cut a 7-job result to the true 5.
+- It flags `registry_contradiction` per job — evidence says blocked,
+  registry says fine. That disagreement is the finding.
+- Exit 2 means the evidence layer was unreadable. That is NOT MEASURED, not
+  clean.
+
+**A "missing env" preflight block is usually an ENV-SCOPE defect, not an
+absent key.** The message names keys that exist. Check both scopes before
+acting:
+
+| scope | path |
+|---|---|
+| root | `~/.hermes/.env` |
+| profile | `~/.hermes/profiles/<profile>/.env` |
+
+Live 2026-09-27: a 3-job family was blocked on `$OCAS_OPERATOR_EMAIL` +
+`$OCAS_FAMILY_CALENDAR_ID`, and both were present and non-empty in the
+**profile** `.env` while the **root** `.env` carried zero `OCAS_*` keys. The
+preflight read root scope, so a recorded fix of "provide the missing
+prerequisites" is a **no-op**. Confirm by checking whether any job overrides
+scope (`env` / `secret_scope` fields; 0 of 156 did). Note that a sibling job
+blocked on different keys which were present in BOTH scopes is therefore a
+genuinely different defect — do not fold it into the scope story.
+
 ## Classification gate (apply to each error job)
 
 - **TRANSIENT / self-recovered** if `consecutive_failures == 0` AND a later
@@ -103,7 +147,9 @@ for j in sorted(error_jobs, key=lambda x: str(x.get("consecutive_failures", 0)),
 
 - **NEVER report "cron health clean" / "0 errors" from a prior scan's state
   or from `hermes cron list` output.** Derive the claim from a FULL enumeration
-  of the live `jobs.json` every run.
+  of the live `jobs.json` every run — AND from the `cron/output/<id>/` evidence
+  layer, because `blocked_config` does not surface as `error` and can sit under
+  a green `last_status`.
 - A "0 errors" claim is a HIGH-RISK false-negative. Re-prove it each cycle.
 - **Explain every change in the job COUNT between scans.** A shrinking registry is a
   finding, not background noise. Observed live: 157 -> 155 jobs in ~2.5h with the error

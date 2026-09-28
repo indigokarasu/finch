@@ -41,6 +41,30 @@ The `SKILL.md` ## Scanning Gotchas section carries one-line pointers here. Full 
 - **Gateway RSS growth tracking**: The hermes gateway process RSS can grow significantly over days. When reporting system health in scan journals, always note the gateway RSS and compare to prior scans. A 3x increase (e.g., 538MB → 1.5GB in one day) is notable — flag it in the scan summary as "elevated, trending up" even if not yet actionable. Only escalate to MEDIOUS if it exceeds 2GB or causes OOM pressure. **Confirmed 2026-06-30**: Gateway RSS grew from 538MB → 1.5GB between consecutive 2h scans.
 - **consecutive_failures is the ONLY reliable error gate — confirmed 2026-06-30**: A job with `last_error` set to a non-null string but `consecutive_failures: 0` has ALREADY RECOVERED. The error string persists as a stale artifact from a previous run. **Never create a CRITICAL or HIGH task based on `last_error` alone without checking `consecutive_failures > 0`.** Scan #13 (2026-06-30 03:00Z) misdiagnosed 3 transient LLM provider HTTP 400/429 errors (all `consecutive_failures: 0`) as "Google OAuth revoked," creating task-<id> + task-<id> that blocked email/calendar/drive scrutiny for 24h. Scan #14 (03:33Z) discovered all 140 jobs were healthy and the tasks were stale. gate: filter `consecutive_failures > 0` BEFORE classifying errors. If 0 jobs have consec > 0, report "all clear" and do not create error tasks. See `references/scan-error-classification.md` § "CRITICAL RULE: consecutive_failures gates task creation."
 
+## A COMPOUND GMAIL QUERY RETURNING 0 IS NOT AN EMPTY MAILBOX — cross-probe before believing it (proven 2026-09-27, scan #977)
+
+The scan prompt mandates `search_gmail_messages(query="newer_than:2d")`, and the
+instinct is to narrow it to `in:inbox newer_than:2d` when hunting for actionable mail.
+Live on a production profile that narrowed query returned **0 messages** while
+`newer_than:2d` alone returned 40 and `in:inbox` alone returned 5. The 0 was TRUE —
+the mailbox genuinely had no inbound in 2 days — but nothing in that single response
+distinguishes "no mail" from "the compound query did not match". Three cheap queries
+settle it:
+
+| query | rows | what it proves |
+|-------|------|----------------|
+| `newer_than:2d` | 40 | the account is readable; a 0 here IS an instrument fault |
+| `in:inbox` | 5 | newest inbound is 09-25 → the 2-day inbox window is genuinely empty |
+| `in:inbox newer_than:2d` | 0 | consistent with the above, proves nothing alone |
+
+Read the **newest timestamp** of the un-narrowed query, not the row count. Reporting
+"0 actionable emails, mailbox clean" off the compound query alone is the same
+false-completion direction as a page-1 read reported as a sweep: a statement about the
+read dressed as a statement about the world. The general rule is the one already stated
+for the tool surface — a partial or narrowed read must never be reported as a fact about
+the corpus. Narrowing a query to reduce noise is a FILTER, and a filter that returns
+nothing must be validated against the unfiltered corpus before it becomes a verdict.
+
 ## Merged from SKILL.md (progressive-disclosure pass)
 
 Full bodies for pointers that previously lived inline in SKILL.md.
