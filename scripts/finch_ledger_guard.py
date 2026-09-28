@@ -500,6 +500,25 @@ _SELF_STAMP_KEYS = ("timestamp", "as_of", "started_at", "scan_cycle")
 # Tolerate small filesystem/clock skew, and a writer that truncates to the
 # minute and commits a few seconds before the second hand catches up.
 _SKEW_TOLERANCE_S = 60
+# How far a self-stamp's digits may sit BEHIND its own mtime and still read as
+# "the named moment was a real moment just before the commit". A run writes its
+# journal at the END, so a start stamp normally lands minutes to an hour before
+# the file's mtime. Four hours is loose on purpose: the question is not "how long
+# did the run take" but "could these digits be a UTC wall clock", and a
+# timestamp that is 5h behind the commit cannot be that. A run that genuinely
+# takes longer than this still reads as clock-forward, which is the safe
+# direction -- it keeps the stamp in the bucket a reviewer must look at.
+_SELF_STAMP_COHESION_WINDOW_S = 4 * 3600
+# The forward end of the same window reuses the skew tolerance: digits may sit
+# at most _SKEW_TOLERANCE_S ahead of the commit before "digits are UTC" stops
+# being a coherent story.
+_SELF_STAMP_SKEW_TOLERANCE_S = _SKEW_TOLERANCE_S
+# Age at which a forward self-stamp stops being "a writer is still doing it".
+# One day is chosen against the cadence of the thing that writes journals, not
+# against a round number: finch:work runs every 30 min, so anything under a few
+# hours is a run in flight or just finished. The report uses this to say how many
+# members of the set are live rather than asserting the whole set is historical.
+_SELF_STAMP_RECENT_S = 24 * 3600
 # Filename prefixes by NAMESPACE. `work-*` journals carry a scan_number that is
 # NOT their own -- it is the scan they executed AGAINST (see work-0258.json
 # #144). Sorting those into a scan-number monotonicity series is a category
@@ -540,6 +559,77 @@ def _parse_offset(v):
     return dt.astimezone(UTC)
 
 
+def _offset_tag(v):
+    """The offset suffix on a stamp, or 'Z' / None for a Z or naive stamp.
+
+    The distinction is load-bearing, not cosmetic. A stamp tagged 'Z' or
+    '+00:00' has no tag to be wrong about, so if it is forward the CLOCK is
+    forward and the only possible cause is the writer. A stamp carrying a
+    LOCAL offset has a tag that can disagree with its own digits, and that
+    disagreement is a separate, much more common defect.
+    """
+    if not isinstance(v, str):
+        return None
+    s = v[10:]
+    if s.endswith("Z"):
+        return "Z"
+    if "+" in s:
+        return "+" + s.split("+", 1)[1]
+    if "-" in s:
+        return "-" + s.split("-", 1)[1]
+    return None
+
+
+# A tag equal to the writer's own local offset, as opposed to a zero offset.
+# A local tag means the digits are LOCAL by the stamp's own claim, so the
+# question becomes whether they are local-but-forward (a real forward clock)
+# or local-shaped-but-actually-UTC (a mislabelled tag).
+def _tag_is_local(tag):
+    return bool(tag) and tag not in ("Z", "+00:00")
+
+
+def _attribute_self_stamp(value, jmt):
+    """Decide WHY a self-stamp is forward. Returns (cause, digits_as_utc_s).
+
+    Two causes, discriminated by the TAG, never by the digits alone:
+
+      offset-tag-mislabelled  the digits are UTC; the local offset tag lies.
+                              Read as written the stamp jumps a whole
+                              timezone forward. Corroborated 2026-09-28
+                              against the guard's own receipt log -- a clock
+                              written by a different process -- which places
+                              the run 8.6 min BEFORE its own commit, so
+                              reading the tag as written is the error.
+
+      clock-forward           the stamp really is ahead of the file. Nothing
+                              to excuse it: either the clock moved or a later
+                              writer touched the file. Reported as-is.
+
+    The discrimination is deliberately asymmetric. A local tag on a forward
+    stamp is enough to suspect a mislabel, but the stamp is only RELABELLED
+    when its digits read back coherently as UTC against the file's own mtime
+    -- i.e. within a window in which "started at HH:MM, committed minutes
+    later" is the ordinary case. Outside that window the tag is the more
+    likely error and the cause stays clock-forward, so a real forward stamp is
+    never quietly absorbed into the mislabel bucket. That asymmetry matters
+    because the mislabel bucket is the one a reviewer reads as benign.
+    """
+    tag = _offset_tag(value)
+    if not _tag_is_local(tag):
+        return "clock-forward", None
+    # Digits read back as if they were UTC, ignoring the tag entirely.
+    try:
+        naive = datetime.datetime.fromisoformat(
+            str(value).replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return "clock-forward", None
+    digits_utc = naive.replace(tzinfo=UTC)
+    delta = (digits_utc - jmt).total_seconds()
+    if -_SELF_STAMP_COHESION_WINDOW_S <= delta <= _SELF_STAMP_SKEW_TOLERANCE_S:
+        return "offset-tag-mislabelled", round(delta, 1)
+    return "clock-forward", None
+
+
 def _journal_coherence(journal_dir):
     """Measure journal self-stamps and scan-number monotonicity.
 
@@ -549,6 +639,17 @@ def _journal_coherence(journal_dir):
     is a claim about the read, not about the world. Two further defects: it
     never checked a journal's OWN timestamp, and it folded `work-*` journals
     into the scan series even though their scan_number references another run.
+
+    FIXED 2026-09-28 (finch:work #232): each self-stamp now carries the CAUSE
+    of its forwardness. Measured against the live corpus: 27 forward, of which 3
+    carry a local offset tag whose digits are UTC, so reading the tag as
+    written moves them a whole timezone forward -- and one of the 3 is 1.2h
+    old, written by a run that was still executing. The report also stopped
+    calling the whole set "historical". A 4th candidate
+    (2026-09-23/work-1755.json) was REJECTED: its digits read back 279s AFTER
+    the commit, past the 60s skew tolerance, so the mislabel is not the only
+    story and it stays clock-forward. The stricter reading is deliberate --
+    see _attribute_self_stamp.
     """
     jd = journal_dir or _resolve(_JOURNAL_DIRS)
     if not jd:
@@ -558,6 +659,11 @@ def _journal_coherence(journal_dir):
         return {"measured": False, "note": "NOT MEASURED -- no *.json found"}
 
     by_ns, self_stamp_fwd, skipped = {}, [], 0
+    now = datetime.datetime.now(UTC)
+    # A stamp on a file younger than this is a writer that is still running, not
+    # a historical artefact. Kept as a separate count so the report cannot call
+    # the whole set "historical" while its newest member is an hour old.
+    recent_cutoff_s = _SELF_STAMP_RECENT_S
     for f in files:
         rel = os.path.relpath(f, jd)
         try:
@@ -579,9 +685,20 @@ def _journal_coherence(journal_dir):
                 continue
             delta = (t - jmt).total_seconds()
             if delta > _SKEW_TOLERANCE_S:
-                self_stamp_fwd.append({"file": rel, "field": k, "value": j[k],
-                                       "mtime_utc": jmt.isoformat(),
-                                       "delta_min": round(delta / 60, 1)})
+                cause, digits_s = _attribute_self_stamp(j[k], jmt)
+                self_stamp_fwd.append({
+                    "file": rel, "field": k, "value": j[k],
+                    "mtime_utc": jmt.isoformat(),
+                    "delta_min": round(delta / 60, 1),
+                    # Why it is forward. 'offset-tag-mislabelled' is not the
+                    # benign bucket it looks like: the digits are UTC and the
+                    # tag lies, so every consumer of this stamp reads the
+                    # wrong instant. It is counted, not excused.
+                    "cause": cause,
+                    "offset_tag": _offset_tag(j[k]),
+                    "digits_as_utc_delta_s": digits_s,
+                    "age_h": round((now - jmt).total_seconds() / 3600.0, 2),
+                    "live": (now - jmt).total_seconds() <= recent_cutoff_s})
             break
 
     # (2) scan-number monotonicity, WITHIN the scan namespace only.
@@ -671,6 +788,13 @@ def _journal_coherence(journal_dir):
         "non_monotonic": non_mono,
         "self_stamp_forward": self_stamp_fwd,
         "self_stamp_forward_count": len(self_stamp_fwd),
+        # Split by cause, and split by age. Both were missing, which let one
+        # 2026-08-17 daily and a 1.09h-old scan-0329 share a single clause
+        # calling the whole set "historical".
+        "self_stamp_cause_counts": dict(Counter(
+            s.get("cause", "unknown") for s in self_stamp_fwd)),
+        "self_stamp_recent_count": sum(1 for s in self_stamp_fwd if s.get("live")),
+        "self_stamp_recent_files": [s["file"] for s in self_stamp_fwd if s.get("live")],
         "filename_clock_mismatch": fn_mismatch,
         "work_scan_numbers_excluded": [r for r, j, _m in by_ns.get("work", [])
                                        if isinstance(j.get("scan_number"), int)],
@@ -871,12 +995,26 @@ def main():
                      ", ".join("%s=%d" % kv for kv in j["namespaces"].items()),
                      j["with_scan_number"], j["cohort_range"]))
             if j["self_stamp_forward"]:
-                print("   JOURNAL SELF-STAMP FORWARD on %d file(s):"
+                print("   JOURNAL SELF-STAMP FORWARD on %d file(s), BY CAUSE:"
                       % len(j["self_stamp_forward"]))
+                for cause, n in sorted(j.get("self_stamp_cause_counts", {}).items()):
+                    print("      %-24s %d" % (cause, n))
                 for s in j["self_stamp_forward"]:
-                    print("      %-34s %-9s %-28s mtime=%s  (+%.0f min)"
+                    print("      %-34s %-9s %-28s mtime=%s  (+%.0f min)  cause=%s"
+                          "  tag=%s  age=%.1fh%s"
                           % (s["file"], s["field"], s["value"],
-                             s["mtime_utc"][11:19], s["delta_min"]))
+                             s["mtime_utc"][11:19], s["delta_min"],
+                             s.get("cause"), s.get("offset_tag"),
+                             s.get("age_h", 0.0),
+                             "  LIVE (<=24h, writer still active)"
+                             if s.get("live") else ""))
+                _rc = j.get("self_stamp_recent_count", 0)
+                if _rc:
+                    print("      %d of these are <=24h old, so NOT historical:"
+                          " a current writer is producing them." % _rc)
+                print("      cause=offset-tag-mislabelled means the DIGITS are UTC"
+                      " and the local tag lies; the stamp stays counted"
+                      " because every consumer reads the wrong instant.")
             for n in j["non_monotonic"]:
                 print("   NON-MONOTONIC scan_number: %s  #%s after #%s"
                       % (n["file"], n["seen"], n["previous"]))
@@ -922,8 +1060,21 @@ def main():
                   " forward, unrepaired, and now hidden by an advanced mtime"
                   % rep["laundered_count"])
         elif jf:
+            # NOT "historical": measured 2026-09-28 the newest member of this set
+            # is 1.09h old, written by a run that was still executing. Calling
+            # the whole set historical hid a live writer behind a dead-looking
+            # clause, which is the safe-direction misreport this file exists to
+            # prevent. Say how many are live, and what the causes are.
+            _live = rep["journals"].get("self_stamp_recent_count", 0) \
+                if rep["journals"].get("measured") else 0
+            _causes = rep["journals"].get("self_stamp_cause_counts", {}) \
+                if rep["journals"].get("measured") else {}
             print("\nVERDICT: LEDGER CLEAN; %d JOURNAL SELF-STAMP(S) PRESENT"
-                  " (historical, not written by this run)" % jf)
+                  " (%d live, <=24h; not written by this run)"
+                  " -- causes: %s"
+                  % (jf, _live,
+                     ", ".join("%s=%d" % kv for kv in sorted(_causes.items()))
+                     or "unattributed"))
         else:
             print("\nVERDICT: CLEAN")
     # The EXIT CODE answers only "must a writer act on the ledger?" Journal
