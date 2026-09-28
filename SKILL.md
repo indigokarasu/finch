@@ -80,7 +80,7 @@ Finch is the OCAS System Evolution Layer's self-improvement orchestrator: pure-L
 
 ## When NOT to Use
 
-- Real-time behavioral adaptation (Chronicle handles pattern detection).
+- User modeling or relationship adaptation. Chronicle owns descriptive user-pattern evidence; relationship Dreaming interprets it into user-scoped posture. Finch mines agent/system learning signals.
 - Skill evaluation scoring (Mentor handles OKR evaluation).
 - Skill creation/architecting (Forge builds skills).
 - Entity identity resolution (Chronicle tools handle direct writes).
