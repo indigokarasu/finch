@@ -30,3 +30,23 @@ assets/readme/hero.svg
 scripts/finch_kdp_watch.py
 scripts/tseg_watch.py
 scripts/test_block_ledger_hook.sh
+# Same class, same reason. These were NOT listed when the 8 of them were moved
+# out of the tree on 2026-09-28 (see 0c83f0f) -- an incomplete list, not a
+# deliberate removal: each is the named authority of an open task, so deleting
+# one makes that task's re_verify_trigger unreachable. Listed exhaustively and
+# by PATTERN, because a per-file list has now failed twice: the first 3 by
+# omission, and a PII gate that reports 28 findings is the only reliable
+# enumerator of what must not ship.
+scripts/chronicle_lock_storm_watch.py
+scripts/test_chronicle_lock_storm_watch.py
+scripts/finch_blocked_config_watch.py
+scripts/finch_journal_write.py
+scripts/test_finch_journal_write.py
+scripts/finch_onemed_0929_watch.py
+scripts/test_finch_onemed_0929_watch.py
+scripts/finch_tokyo_ada_watch.py
+# Catch-all for this class: anything reading THIS host's registry, mailbox or
+# filesystem layout. Prefer a new host-only watcher being ignored by default over
+# it needing a line here, so the failure is silent until the PII gate catches it.
+scripts/*_watch.py
+scripts/test_*_watch.py
