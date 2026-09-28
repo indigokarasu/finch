@@ -71,10 +71,13 @@ within 72h — and **3 of those 5 were stamped `last_status: ok`**. A job that
 never ran reads green. Sweeping only for `error` reports health for a job
 that produced nothing.
 
-Enumerate the evidence layer every pass, not just `error`:
+Enumerate the evidence layer every pass, not just `error`. The check is a
+directory scan, not a registry query — write it as a throwaway probe under
+`cache/scratch/` and read the run files directly:
 
 ```bash
-python3 scripts/finch_blocked_config_watch.py --hours 72 --json
+grep -rl "Status:\*\* BLOCKED (configuration)" \
+  ~/.hermes/profiles/<profile>/cron/output/ --include="*.md" --include="*.txt"
 ```
 
 - It requires the `**Status:** BLOCKED (configuration)` LINE. Do NOT match a
