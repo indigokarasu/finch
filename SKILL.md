@@ -1,9 +1,11 @@
 ---
 license: MIT
 description: 'OCAS self-improvement orchestrator (Darwin''s finch — adaptive evolution).
-  Mines session transcripts for corrections, breakthroughs, methodologies, and directives
-  (Always/Never); routes each finding to MEMORY.md, skill files, references, or Chronicle
-  KG; compacts MEMORY.md by tier routing. Part of the OCAS System Evolution Layer
+  Mines session transcripts for agent/system corrections, breakthroughs, methodologies,
+  and directives (Always/Never); routes each finding to MEMORY.md, skill files,
+  references, or Chronicle KG; user-scoped relationship signals are routed to
+  Chronicle/relationship Dreaming instead of becoming global behavior; compacts
+  MEMORY.md by tier routing. Part of the OCAS System Evolution Layer
   alongside Mentor, Fellow, and Forge. NOT for real-time behavioral adaptation, skill
   evaluation, or skill creation.'
 includes:
@@ -93,7 +95,7 @@ Interactive invocation presents a two-level menu (layout, Clarify timeout, respo
 
 1. **Scan** (`finch:scan`, every 2h) — read the 7 sources; update `task-list.json`. Cron health MUST come from the LIVE `jobs.json` via `references/cron-health-validation.md` — never `cronjob list` alone (hides paused/disabled errors). Re-validate prior tasks both directions (re-open on relapse, resolve on recovery).
 2. **Work** (`finch:work`, every 30m) — pick the top pending task, load the governing skill, execute ONE. De-duplicate task IDs first (`references/duplicate-task-detection.md`). Then append `[Work log: <timestamp> <summary>]` and set `status: "done"`, `done_at`, `updated_at`.
-3. **Route** — findings to MEMORY.md, skill patches, or references; proposed skill patches stage under `{agent_root}/commons/data/ocas-forge/staged/{skill}/` for `ocas-fellow` evaluation before production. Behavioral rules (priority 0) apply immediately.
+3. **Route** — first classify scope. A finding about this user's interaction preference or relationship with the agent routes to Chronicle/relationship Dreaming and MUST NOT become a global MEMORY.md rule or skill patch. Agent/system-general findings route to MEMORY.md, skill patches, or references; proposed skill patches stage under `{agent_root}/commons/data/ocas-forge/staged/{skill}/` for `ocas-fellow` evaluation before production. Only genuinely system-general behavioral rules (priority 0) apply immediately.
 4. **Journal** — every run emits an Action Journal entry under `{agent_root}/commons/journals/ocas-finch/`.
 
 **MANDATORY, BOTH STEPS 1 AND 2 — close the ledger's own clock before and after
@@ -128,7 +130,7 @@ rather than re-reporting as an open duplicate.
 
 **Work-execution rules** (details in `references/work-execution-procedures.md`): triage signal (real / stale / transient); actionability filter (unattended cron); pipeline resumption from the ledger; break repeated check-and-close loops; prescribed fixes may be wrong — verify self-recovery / fail-loud guards first (`references/work-prescribed-fix-selfrecovery-guard.md`).
 
-**Mining frameworks** (`references/mining_methodology.md`): tag failures by phase — **Planning** → patch preconditions; **Execution** → patch gotchas; **Response** → patch output sections. Record corrections as `[CORRECTION] What / Why / When` so lessons transfer.
+**Mining frameworks** (`references/mining_methodology.md`): scope before transfer. User-scoped relationship corrections route to Chronicle/relationship Dreaming; only agent/system-general signals continue through Finch. For those, tag failures by phase — **Planning** → patch preconditions; **Execution** → patch gotchas; **Response** → patch output sections. Record corrections as `[CORRECTION] What / Why / When` so lessons transfer.
 
 ## Scanning gotchas (top traps)
 
