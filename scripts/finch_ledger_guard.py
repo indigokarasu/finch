@@ -144,9 +144,22 @@ _JOURNAL_DIRS = [d for d in _JOURNAL_DIRS if d]
 
 UTC = datetime.timezone.utc
 TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+# A timestamp PLUS its offset, so isolating a stamp from a trailing
+# ' (finch:scan #N)' cannot truncate the offset away again. `TS_RE` matches
+# only the 19 naive characters; matching it and re-using `.group(0)` is the
+# original bug reproduced inside the fix, which is exactly how the offset fix
+# appeared to pass and then did not.
+_STAMP_WITH_OFFSET_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:?\d{2})?")
 
 # Top-level fields that claim to describe THIS ledger's current state.
 HEADER_FIELDS = ("as_of", "last_scan_at", "scan_cycle", "updated_at", "last_work_at")
+# Dotted paths that carry the same claim one level down. The header records the
+# same instant TWICE, in two forms, and each form used to defeat the guard
+# differently: `last_scan.at` is nested so a flat `if k not in doc` walk skips
+# it silently, and it is the form scan writers emit in Z. Coverage is
+# therefore the union -- a field is checked if EITHER shape carries it.
+NESTED_HEADER_FIELDS = ("last_scan.at",)
 # Per-task fields that assert a moment in time.
 TASK_FIELDS = ("created_at", "updated_at", "done_at", "last_finch_review")
 
@@ -166,13 +179,84 @@ def _env_ledger():
 
 
 def _parse(v):
-    """Parse a ledger timestamp to an aware UTC datetime, or None."""
-    if not isinstance(v, str) or not TS_RE.match(v):
+    """Parse a ledger timestamp to an aware UTC datetime, or None.
+
+    FIXED 2026-09-28 (finch:work #231). The previous body was
+    `fromisoformat(v[:19]).replace(tzinfo=UTC)`: it truncated to the first 19
+    characters and FORCED UTC, discarding any offset the writer emitted. For a
+    `-07:00` stamp that is a 7-hour error in the SAFE direction -- the true
+    instant is read as 7h earlier, so a stamp 43 minutes FORWARD of the file
+    mtime measured as -22631s and reported clean. Verified: the header of the
+    live ledger carried exactly that shape and the guard exited 0 on it.
+
+    The correct parser was ALREADY in this file for the journal-coherence path
+    (`_parse_offset`, ~40 lines below) and was simply not used here. Delegate
+    to it rather than writing a third variant -- the defect was two readings of
+    one rule, and a third reading would recreate it.
+
+    A NAIVE stamp (no offset) is still read as UTC, unchanged: the ledger
+    format has always been UTC, and defaulting it to the host's local zone
+    would re-open the same class of error from the other side.
+
+    The Suffix guard below is load-bearing and was found by the regression suite
+    rather than by reading. The old `v[:19]` truncation happened to tolerate the
+    ' (finch:scan #N)' suffix that `last_finch_review` carries; handing the
+    WHOLE string to `fromisoformat` makes it raise, so delegating naively made
+    every suffixed task stamp unparseable -- and an unparseable forward stamp
+    is a MISSED violation, the same safe-direction false negative in a new
+    place. So the timestamp is isolated first, then handed over.
+    """
+    if not isinstance(v, str):
         return None
-    try:
-        return datetime.datetime.fromisoformat(v[:19]).replace(tzinfo=UTC)
-    except ValueError:
+    m = _STAMP_WITH_OFFSET_RE.match(v)
+    if not m:
         return None
+    return _parse_offset(m.group(0))
+
+
+def _resolve_field(doc, path):
+    """Resolve a flat-or-dotted field path to (found, value).
+
+    `as_of` is a top-level key; `last_scan.at` is one level down. Both are
+    ledger header stamps and the guard must read both, so every lookup goes
+    through here rather than through a bare `in doc` membership test. Setting
+    is done by the caller, which owns the container it wants to mutate.
+    """
+    if not isinstance(doc, dict):
+        return False, None
+    if path in doc:
+        return True, doc[path]
+    parts = path.split(".")
+    node = doc
+    for p in parts[:-1]:
+        if not isinstance(node, dict) or p not in node:
+            return False, None
+        node = node[p]
+    leaf = parts[-1]
+    if isinstance(node, dict) and leaf in node:
+        return True, node[leaf]
+    return False, None
+
+
+def _set_field(doc, path, value):
+    """Write a flat-or-dotted field path in place. Returns True if written."""
+    if not isinstance(doc, dict):
+        return False
+    if path in doc:
+        doc[path] = value
+        return True
+    if "." not in path:
+        return False
+    parts = path.split(".")
+    node = doc
+    for p in parts[:-1]:
+        if not isinstance(node, dict) or p not in node:
+            return False
+        node = node[p]
+    if isinstance(node, dict) and parts[-1] in node:
+        node[parts[-1]] = value
+        return True
+    return False
 
 
 def check(ledger_path=None, journal_dir=None):
@@ -215,14 +299,20 @@ def check(ledger_path=None, journal_dir=None):
     rep["sha256"] = _file_sha256(path)
 
     # --- header fields -----------------------------------------------------
-    for k in HEADER_FIELDS:
-        if k not in doc:
+    # Coverage is the UNION of flat and dotted paths, so the same instant
+    # recorded as `last_scan_at` and as `last_scan.at` is checked twice rather
+    # than once-and-silently-skipped. A `k not in doc` skip is fine for an
+    # absent field and wrong for a present one at another depth: the guard read
+    # as "this field is clean" when it had never looked.
+    for k in HEADER_FIELDS + NESTED_HEADER_FIELDS:
+        found, val = _resolve_field(doc, k)
+        if not found:
             continue
-        t = _parse(doc[k])
+        t = _parse(val)
         if t is None:
             continue
         delta = (t - mtu).total_seconds()
-        rep["header"].append({"field": k, "value": doc[k],
+        rep["header"].append({"field": k, "value": val,
                               "delta_s": round(delta, 1), "forward": delta > 0})
 
     # --- per-task fields ---------------------------------------------------
@@ -604,13 +694,16 @@ def repair(path, dry_run=False):
     stamp = mtu.strftime("%Y-%m-%dT%H:%M:%SZ")
     changes = []
 
-    for k in HEADER_FIELDS:
-        t = _parse(doc.get(k))
+    for k in HEADER_FIELDS + NESTED_HEADER_FIELDS:
+        found, val = _resolve_field(doc, k)
+        if not found:
+            continue
+        t = _parse(val)
         if t and t > mtu:
             changes.append({"scope": "header", "id": "-", "field": k,
-                            "from": doc[k], "to": stamp,
+                            "from": val, "to": stamp,
                             "delta_s": round((t - mtu).total_seconds(), 1)})
-            doc[k] = stamp
+            _set_field(doc, k, stamp)
 
     for task in doc.get("tasks", []) or []:
         for k in TASK_FIELDS:
@@ -667,11 +760,12 @@ def _repair_laundered(path, hit, dry_run=False):
     stamp = bound.strftime("%Y-%m-%dT%H:%M:%SZ")
     changes = []
 
-    if hit["id"] == "-" and hit["field"] in doc and doc[hit["field"]] == hit["value"]:
+    if hit["id"] == "-" and _resolve_field(doc, hit["field"])[0] \
+            and _resolve_field(doc, hit["field"])[1] == hit["value"]:
         changes.append({"scope": "header", "id": "-", "field": hit["field"],
                         "from": hit["value"], "to": stamp,
                         "delta_s": 0.0, "note": "laundered"})
-        doc[hit["field"]] = stamp
+        _set_field(doc, hit["field"], stamp)
     else:
         for task in doc.get("tasks", []) or []:
             if task.get("id") != hit["id"]:
