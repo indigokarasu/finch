@@ -170,7 +170,7 @@ Full bodies: `references/scanning-gotchas.md` (MCP/Gmail/cron-JSON) and `referen
 
 ## Behavioral directives (priority 0)
 
-"Always" / "Never" from the user is a priority-0 rule: apply immediately, route to MEMORY.md under `## Always Rules` / `## Never Rules`, never batch with lower-priority findings.
+"Always" / "Never" from the user is a priority-0 rule only when it is genuinely system-general: apply immediately and route to MEMORY.md under `## Always Rules` / `## Never Rules`, never batch with lower-priority findings. User-scoped directives route to Chronicle/relationship Dreaming and MUST NOT become global MEMORY.md rules.
 
 ## Failure modes & error handling
 
