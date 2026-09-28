@@ -137,7 +137,17 @@ def main():
     check("suffix kept", v.endswith("(finch:scan #960)"), v)
     body = v.rsplit(" (finch:", 1)[0]
     t = datetime.datetime.strptime(body, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-    check("body clamped to now", t <= now, body)
+    # Compare against a clock read AFTER the write, not the `now` captured in
+    # block 1. The writer truncates to whole seconds, so a stamp written in the
+    # same second the fixture was read is one second ahead of the earlier
+    # `now` and this asserts `t <= now` on a snapshot that is already stale.
+    # Observed once in ~10 runs (2026-09-28, finch:work #232) -- a genuine
+    # flake, pre-existing and unrelated to that pass's change. The assertion
+    # is about "clamped to about now", so it must be measured against now.
+    now2 = datetime.datetime.now(UTC).replace(microsecond=0)
+    check("body clamped to now", t <= now2,
+          "%s vs now=%s (delta %+ds)"
+          % (body, now2.isoformat(), (t - now2).total_seconds()))
 
     # --- 4. clamp coverage == guard coverage -------------------------------
     print("\n4. the clamp covers exactly the fields the guard reads")

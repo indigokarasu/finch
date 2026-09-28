@@ -36,6 +36,49 @@ When inspecting `~/.hermes/cron/jobs.json` directly (because the `cronjob` tool 
 - **`consecutive_failures > 0` with `last_error=None`** — This pattern means the job's *script* ran fine but delivery failed, or the counter is stale from a previously-resolved issue. Do not treat this as an active job error. Verify with `last_status` (may be `"ok"`).
 - **To find truly errored jobs**: filter for `last_error is not None`. Consecutive failures alone are a weak signal.
 
+## A "batch of N findings" is a set of CAUSES until you can name them
+
+The decomposition above groups by error fingerprint. The same rule applies to a
+count, not just to a list of errors: **a reported count of N identical-looking
+findings is not one finding repeated N times.** Before acting, ask what makes
+each member forward the same way, and split the set if the members do not share
+a cause.
+
+Measured 2026-09-28 (finch:work #232). The ledger guard reported "27 journal
+self-stamps forward" as one flat number, which reads as 27 instances of one
+defect. It was two causes:
+
+- **24 clock-forward** — the stamp really is ahead of the file. Genuine.
+- **3 offset-tag-mislabelled** — the DIGITS are UTC and the local offset tag
+  (`-07:00`) lies, so reading the stamp as written moves it a whole timezone
+  forward. The writer is fine; the label is wrong, and every consumer of that
+  stamp reads the wrong instant.
+
+The evidence that split them was a second reading of the same string: read the
+digits as UTC and compare against the file's own mtime. When that lands
+*behind* the commit by a plausible amount, the tag is the error; when it lands
+incoherently in both directions, the tag cannot be the explanation.
+
+**Discriminate toward the bucket a reviewer reads as benign.** "Mislabelled" is
+the comfortable label, so require positive evidence for it (coherent digits,
+within a window) rather than treating "has an offset tag" as sufficient.
+Absorbing a real forward stamp into a benign bucket hides a live violation, and
+the direction of that error is the one nobody looks for.
+
+**When a single file's timestamps are the only evidence, go get a second clock.**
+A file cannot tell you whether its own digits are UTC or local — both readings
+are internally consistent, and one just happens to place a run's start after its
+own commit, which is impossible. Resolve it against a source that did not
+generate the number: in this case the guard's own append-only receipt log,
+written by a different process, bracketed the commit and showed the run started
+8.6 min before it committed. Without that, the "obvious" reading — a clock 7h
+forward — is a defect that does not exist.
+
+**An attribution is not a suppression.** The mislabelled stamps stayed in the
+count. Adding a `cause` field changes what a reader is told; it must never
+change how many findings there are, or the new field becomes a place to hide
+violations.
+
 ## Key Decision Rule
 
 If the only findings are transient provider errors AND the provider is reachable (HTTP 200), the correct outcome is "monitoring" — NOT escalation, NOT config changes, NOT job re-registration. The stuck scheduler will self-heal once the provider recovers. This follows <other-ocas-skill>'s transient-error decision rules.
