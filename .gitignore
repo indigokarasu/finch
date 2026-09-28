@@ -49,4 +49,4 @@ scripts/finch_tokyo_ada_watch.py
 # filesystem layout. Prefer a new host-only watcher being ignored by default over
 # it needing a line here, so the failure is silent until the PII gate catches it.
 scripts/*_watch.py
-scripts/test_*_watch.py
+scripts/test_*_watch*.py
