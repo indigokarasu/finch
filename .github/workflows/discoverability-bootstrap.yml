@@ -1,0 +1,41 @@
+name: Repository discoverability bootstrap
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+  issues: write
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Repository description and topics
+        run: |
+          gh api --method PATCH "repos/$REPO" -f description='Finch: self-improvement orchestrator — mines session history to detect corrections, breakthroughs, and behavioral patterns.'
+          gh api --method PUT "repos/$REPO/topics" -H "Accept: application/vnd.github+json" -F 'names[]=adaptive-learning' -F 'names[]=ai-agent' -F 'names[]=claude' -F 'names[]=evolution' -F 'names[]=hermes-agent' -F 'names[]=ocas' -F 'names[]=openclaw' -F 'names[]=self-improvement' -F 'names[]=session-mining'
+      - name: Standard labels
+        continue-on-error: true
+        run: |
+          upsert_label () { gh label create "$1" --repo "$REPO" --color "$2" --description "$3" --force; }
+          upsert_label "bug" "d73a4a" "Something is not working"
+          upsert_label "enhancement" "a2eeef" "New feature or improvement"
+          upsert_label "documentation" "0075ca" "Documentation improvements"
+          upsert_label "help wanted" "008672" "Extra attention is needed"
+          upsert_label "good first issue" "7057ff" "Good for first-time contributors"
+          upsert_label "question" "d876e3" "Further information is requested"
+          upsert_label "dependencies" "0366d6" "Dependency updates"
+          upsert_label "security" "b60205" "Security-related work"
+      - name: Ensure release and tag
+        if: ${{ true }}
+        run: |
+          if ! gh release list --repo "$REPO" --limit 1 | grep -q .; then
+            tag="$(gh api "repos/$REPO/tags" --jq '.[0].name' 2>/dev/null || true)"
+            if [ -n "$tag" ]; then
+              gh release create "$tag" --repo "$REPO" --title "$tag" --generate-notes
+            else
+              gh release create "v0.1.0" --repo "$REPO" --target "${{ github.sha }}" --title "v0.1.0" --generate-notes
+            fi
+          fi
