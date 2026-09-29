@@ -57,8 +57,19 @@ COMMIT = datetime.datetime(2026, 9, 28, 3, 28, 58, 906576, tzinfo=UTC)
 NOW = datetime.datetime(2026, 9, 28, 4, 35, 0, tzinfo=UTC)
 
 
-def _journals(specs, ledger_mtime, ledger=None):
-    """Build a journal dir + ledger and return (ledger_path, report)."""
+def _journals(specs, ledger_mtime, ledger=None, now=NOW):
+    """Build a journal dir + ledger and return (ledger_path, report).
+
+    The clock is PINNED to NOW by default. The "recent" field on a journal
+    self-stamp is an AGE against the wall clock, so a fixture whose mtime is
+    a fixed date is recent or historical purely by how long after that date
+    the suite happens to run. Measured 2026-09-29: the suite had rotted to a
+    permanent failure -- every run past 03:28Z on 2026-09-28 saw the newest
+    member as older than the 24h cutoff, and `recent_member_is_not_called_
+    historical` could never pass again. The direction under test is
+    "a 1.2h-old forward stamp is live", so the instant is an input, not a
+    coincidence.
+    """
     td = tempfile.mkdtemp()
     jd = os.path.join(td, "journals")
     os.makedirs(jd)
@@ -71,7 +82,7 @@ def _journals(specs, ledger_mtime, ledger=None):
     with open(lp, "w") as fh:
         json.dump(ledger or {"as_of": "2026-09-28T03:00:00Z", "tasks": []}, fh)
     os.utime(lp, (ledger_mtime.timestamp(), ledger_mtime.timestamp()))
-    return lp, jd, flg.check(lp, journal_dir=jd)
+    return lp, jd, flg.check(lp, journal_dir=jd, now=now)
 
 
 # --- direction 1: the LIVE shape, attributed to the mislabelled tag ---------
