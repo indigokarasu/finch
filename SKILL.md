@@ -104,7 +104,35 @@ Interactive invocation presents a two-level menu (layout, Clarify timeout, respo
 1. **Scan** (`finch:scan`, every 2h) — read the 7 sources; update `task-list.json`. Cron health MUST come from the LIVE `jobs.json` via `references/cron-health-validation.md` — never `cronjob list` alone (hides paused/disabled errors). Re-validate prior tasks both directions (re-open on relapse, resolve on recovery).
 2. **Work** (`finch:work`, every 30m) — pick the top pending task, load the governing skill, execute ONE. De-duplicate task IDs first (`references/duplicate-task-detection.md`). Then append `[Work log: <timestamp> <summary>]` and set `status: "done"`, `done_at`, `updated_at`.
 3. **Route** — first classify scope. A finding about this user's interaction preference or relationship with the agent routes to Chronicle/User Dreaming and MUST NOT become a global MEMORY.md rule or skill patch. Agent/system-general findings route to MEMORY.md, skill patches, or references; proposed skill patches stage under `{agent_root}/commons/data/ocas-forge/staged/{skill}/` for `ocas-fellow` evaluation before production. Only genuinely system-general behavioral rules (priority 0) apply immediately.
-4. **Journal** — every run emits an Action Journal entry under `{agent_root}/commons/journals/ocas-finch/`. **Do not let the model stamp the journal time.** It writes the scheduler slot it was fired for, not `datetime.now()`, so a job that runs late stamps a future date. Derive the timestamp inside the write path from the actual clock and clamp it, with the same due-date exclusion the ledger writer uses.
+4. **Journal** — every run emits an Action Journal entry under `{agent_root}/commons/journals/ocas-finch/`. **Do not let the model stamp the journal time.** It writes the scheduler slot it was fired for, not `datetime.now()`, so a job that runs late stamps a future date. Derive the timestamp inside the write path from the actual clock and clamp it, with the same due-date exclusion the ledger writer uses. **Also omit `completed_at`/`as_of` from any hand-built journal doc** — supply them and the writer silently clamps them to its own clock, so the file disagrees with the clock reading in your prose.
+
+**BEFORE STEP 1 — check whether this is a RESTORED occurrence, not a new one
+(added 2026-09-28; the pipeline was re-fired 5 minutes after completing and had to
+be made idempotent to avoid doing the work twice).** The scheduler's restore path
+re-dispatches an occurrence that was "taken off the schedule but never claimed":
+`next_run_at` advances, the process dies before claiming, and on restart the
+un-claimed occurrence is restored as the due instant. Measured: 309 restore events
+in one day across 20+ jobs, silent per-job (`last_status` stays `ok`). The
+`already running — skipping` guard cannot see it, because the first run has
+already **completed** when the restore fires. So: read the most recent
+`daily-*.json` / `scan-*.json` for this job and compare its `completed_at`/`as_of`
+against the current clock. If it falls inside this job's own period (daily → the
+last ~24h, scan → the last ~2h), **this is a duplicate fire: record it as such in
+the journal, then CONVERGE** — re-verify the prior run's claims from disk, mine
+only the delta after its `completed_at`, and decline every write that would redo
+completed work (a second compaction pass over a near-cap MEMORY.md evicts a live
+directive for nothing; a second ledger write duplicates tasks). The catch-up
+clause below does NOT cover this: a duplicate window reads as a ~0h gap, so every
+clause passes while completed work is redone. Details and the run-id signature:
+`references/pitfalls.md` § "A restored occurrence re-fires the job".
+
+## Catch-up — a MISSED window only
+
+Check when the last run completed: read `{agent_root}/commons/journals/ocas-finch/`
+and find the most recent `daily-*.json` file. If the last run was more than 24h
+ago, expand the window to cover the gap and note it in the journal. (This clause
+is about a missed window; a restored occurrence is a window already processed —
+run the duplicate-fire check above first.)
 
 **MANDATORY, BOTH STEPS 1 AND 2 — close the ledger's own clock before and after
 writing: `python3 scripts/finch_ledger_guard.py` (`--repair` to fix, `--json` for
@@ -265,6 +293,7 @@ After every session, review for signals and update the skill library — procedu
 | `finch_ledger_guard.py` | Ledger forward-stamp / laundering / journal-coherence gate. Exit 0 clean / 1 forward or laundered / 2 unreadable. **Read the VERDICT line, not the exit alone.** Offset-aware; covers flat AND nested header stamps. Fix a forward stamp with `--repair` |
 | `finch_ledger_write.py` | Sanctioned ledger write choke point; clamps at write time so a forward stamp is unreachable. `--set` / `--task --set` / `--doc` / `--clamp-only` / `--dry-run`; exit 3 = written but a re-read still shows a stamp |
 | `ledger_forward_sweep.py` | rvt-clause-3 instrument: offset-aware sweep of the WHOLE ledger for forward stamps, independent of the guard's field list. Exits 1 on any hit outside `due_date`; prose-field examples are listed, not counted |
+| `finch_forward_event_watch.py` | rvt-clause-(a) instrument: **distinct** forward events in the guard receipts, de-duplicated and watermarked. The guard answers "forward NOW"; an event a later pass OVERWRITES is invisible to it forever, so the receipts are the only durable witness. Exit 0 no new / 1 new event / 2 NOT MEASURED. `--ack` advances the watermark (and then returns 0, so an acking caller does not re-fire). Reports STILL-IN-LEDGER vs OVERWRITTEN — repaired vs merely overwritten. Test: `test_finch_forward_event_watch.py` (9 directions) |
 | `test_finch_ledger_guard_parse.py` | 9 directions: offset form + nested form caught, clean ledger stays clean, no-parse regressions. **Run before and after any guard change** |
 | `test_ledger_guard_repair.py` | 6 directions: everything `check()` can see, `repair()` can clear — nested, offset, both, task stamps; clean ledger is a no-op; a future `due_date` is untouched |
 | `check_no_pii.py` | PII gate CI runs before publish | `--quiet`, `--path <file-or-dir>`; EXIT 0 clean / 1 findings. NOTE (2026-09-27): run on the whole skill it reports 79 findings, and that count is PRE-EXISTING and unchanged by edits -- measure a single file with `--path <file>` to attribute a finding, and diff the whole-skill count against HEAD (`git stash`) before claiming your change introduced one. |

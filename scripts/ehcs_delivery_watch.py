@@ -35,9 +35,78 @@ JOB_ID = "dfd7f742d4f2"
 # real filesystem root or a concrete profile name. Override either var to
 # point at a different host; both default to the documented layout.
 HERMES_HOME = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
-AGENT_ROOT = os.environ.get("OCAS_AGENT_ROOT") or os.path.join(
-    HERMES_HOME, "profiles", os.environ.get("HERMES_PROFILE", "<profile>"))
-HERMES_SRC = os.path.join(HERMES_HOME, "hermes-agent")
+# Resolve profile from script's own path (this script lives under profiles/<name>/skills/...),
+# not from env vars that may be unset in cron workers.
+# OCAS_PROFILE_OVERRIDE allows testing a different profile scope (e.g., root = empty string).
+_THIS_FILE = os.path.abspath(__file__)
+# Walk up to profiles/<name>/
+_profile_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(_THIS_FILE))))  # scripts/ -> skills/ -> <skill>/ -> skills/ -> profiles/<profile>/
+PROFILE_NAME = os.environ.get("OCAS_PROFILE_OVERRIDE", os.path.basename(_profile_dir))
+
+
+def _ancestors(path):
+    """Yield `path` then each parent, up to the filesystem root."""
+    current = os.path.abspath(path)
+    while True:
+        yield current
+        parent = os.path.dirname(current)
+        if parent == current:
+            return
+        current = parent
+
+
+def _resolve_agent_root():
+    """Resolve the profile root by LAYOUT, not by offset from $HERMES_HOME.
+
+    $HERMES_HOME is the HOST root for a multiplex gateway but the PROFILE root
+    for a cron worker started inside a profile. Appending "profiles/<name>"
+    unconditionally therefore double-nests in the second case, and the
+    registry read fails with a FileNotFoundError on a path that looks right.
+
+    Do NOT test `isfile($HERMES_HOME/cron/jobs.json)` to decide which layout
+    you are in: on a multiplex host the profile registry and the host registry
+    are ONE inode, so that test is true under BOTH and silently resolves the
+    host scope when the profile scope was wanted. The only invariant across
+    every $HERMES_HOME is this script's own path -- it lives under
+    profiles/<name>/skills/.../scripts/, so four levels up IS the profile
+    root, whatever the environment says. An explicit override still wins.
+    """
+    override = os.environ.get("OCAS_AGENT_ROOT")
+    if override:
+        return override
+    # Explicit root scope (OCAS_PROFILE_OVERRIDE="") means HERMES_HOME itself.
+    if PROFILE_NAME == "":
+        return HERMES_HOME
+    # Path-derived root: correct under both layouts, and it is a profile root.
+    if os.path.isdir(os.path.join(_profile_dir, "cron")):
+        return _profile_dir
+    # Layout fallback only if the path-derived root is not a registry root.
+    if os.path.isfile(os.path.join(HERMES_HOME, "cron", "jobs.json")):
+        return HERMES_HOME
+    return os.path.join(HERMES_HOME, "profiles", PROFILE_NAME)
+
+
+def _resolve_hermes_src():
+    """Locate the hermes-agent source tree by walking ancestors.
+
+    It sits beside the profile dir (host root) or two levels above it
+    (profile root), so a fixed offset from $HERMES_HOME is wrong in one of
+    the two layouts -- which silently turned the live check into
+    "UNVERIFIABLE OFFLINE" rather than reporting a missing tree.
+    """
+    for override in (os.environ.get("OCAS_HERMES_SRC"), os.environ.get("HERMES_SRC")):
+        if override:
+            return override
+    for base in (_THIS_FILE, HERMES_HOME):
+        for directory in _ancestors(base):
+            candidate = os.path.join(directory, "hermes-agent")
+            if os.path.isdir(candidate):
+                return candidate
+    return os.path.join(HERMES_HOME, "hermes-agent")
+
+
+AGENT_ROOT = _resolve_agent_root()
+HERMES_SRC = _resolve_hermes_src()
 REGISTRY = os.path.join(AGENT_ROOT, "cron", "jobs.json")
 CONFIG = os.path.join(AGENT_ROOT, "config.yaml")
 

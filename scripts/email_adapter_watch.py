@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only, re-runnable health probe for the Indigo gateway adapter stack.
+"""Read-only, re-runnable health probe for the <profile> gateway adapter stack.
 
 Answers, with evidence, what a task note cannot:
 

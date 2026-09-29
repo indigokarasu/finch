@@ -45,6 +45,21 @@ scripts/test_finch_journal_write.py
 scripts/finch_onemed_0929_watch.py
 scripts/test_finch_onemed_0929_watch.py
 scripts/finch_tokyo_ada_watch.py
+# Added 2026-09-29. The catch-all `scripts/*_watch.py` below already covers this
+# file's CLASS, but .gitignore only governs files that are not ALREADY tracked:
+# this one had been committed on 2026-09-27, so the pattern never applied to it
+# and it shipped 35 PII findings (another profile's name, a concrete profile
+# path, an absolute host root) in a public repo. A per-file list plus a pattern
+# is only as good as the git index behind it -- an ignore rule a tracked file has
+# already escaped is decoration. `git rm --cached` is the part that actually
+# fixes it; the catch-all below is what stops the next `git add -A` re-adding
+# it. No per-file line is added for it: the filename itself names another
+# profile, so writing it down would put the leak in the very file meant to
+# prevent it -- and the pattern is what actually covers the class anyway.
+# Auto-generated intent-pipeline artifacts. They name the generating agent and
+# session, so every file carries a denylisted entity; they are machine output,
+# not documentation, and the pipeline recreates them on demand.
+.intent/
 # Catch-all for this class: anything reading THIS host's registry, mailbox or
 # filesystem layout. Prefer a new host-only watcher being ignored by default over
 # it needing a line here, so the failure is silent until the PII gate catches it.
