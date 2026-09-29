@@ -6,6 +6,7 @@ sweep that reused the guard's list could only ever confirm the guard.
 
 Exits non-zero on any forward stamp outside tasks[].due_date.
 """
+import argparse
 import datetime
 import json
 import os
@@ -108,8 +109,21 @@ def sweep(path):
     return out
 
 
-if __name__ == "__main__":
-    hits = sweep(LEDGER)
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        description="Sweep every timestamp-shaped string in the ledger for a "
+                    "stamp that claims to be later than the ledger's own "
+                    "mtime. due_date is a deadline and is exempt; timestamps "
+                    "quoted inside prose are listed, not counted.")
+    ap.add_argument("--ledger", default=LEDGER,
+                    help="path to task-list.json (default: $FINCH_LEDGER, "
+                         "else ~/.hermes/commons/data/ocas-finch/task-list.json)")
+    args = ap.parse_args(argv)
+    hits = sweep(args.ledger)
     print("\nVERDICT: %s" % ("CLEAN" if not hits
                              else "%d FORWARD STAMP(S) FOUND" % len(hits)))
-    sys.exit(1 if hits else 0)
+    return 1 if hits else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

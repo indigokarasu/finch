@@ -259,10 +259,11 @@ def _set_field(doc, path, value):
     return False
 
 
-def check(ledger_path=None, journal_dir=None):
+def check(ledger_path=None, journal_dir=None, now=None):
     """Validate the ledger. Never raises on ledger content; returns a report dict."""
+    now = now or datetime.datetime.now(UTC)
     rep = {"ledger": None, "ledger_found": False, "ledger_error": None,
-           "mtime_utc": None, "now_utc": datetime.datetime.now(UTC).isoformat(),
+           "mtime_utc": None, "now_utc": now.isoformat(),
            "header": [], "task_fields": [], "journals": {},
            "ledger_clock_measured": False, "journals_measured": False,
            "forward_count": 0}
@@ -336,7 +337,7 @@ def check(ledger_path=None, journal_dir=None):
     rep["laundered_count"] = len(rep["laundered"])
 
     # --- journal coherence -------------------------------------------------
-    rep["journals"] = _journal_coherence(journal_dir)
+    rep["journals"] = _journal_coherence(journal_dir, now=now)
     rep["journals_measured"] = bool(rep["journals"].get("measured"))
     return rep
 
@@ -630,7 +631,7 @@ def _attribute_self_stamp(value, jmt):
     return "clock-forward", None
 
 
-def _journal_coherence(journal_dir):
+def _journal_coherence(journal_dir, now=None):
     """Measure journal self-stamps and scan-number monotonicity.
 
     FIXED 2026-09-26: the previous implementation globbed only `scan-*.json`
@@ -659,7 +660,7 @@ def _journal_coherence(journal_dir):
         return {"measured": False, "note": "NOT MEASURED -- no *.json found"}
 
     by_ns, self_stamp_fwd, skipped = {}, [], 0
-    now = datetime.datetime.now(UTC)
+    now = now or datetime.datetime.now(UTC)
     # A stamp on a file younger than this is a writer that is still running, not
     # a historical artefact. Kept as a separate count so the report cannot call
     # the whole set "historical" while its newest member is an hour old.
