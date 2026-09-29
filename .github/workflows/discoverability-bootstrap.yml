@@ -1,21 +1,19 @@
 name: Repository discoverability bootstrap
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
+    paths:
+      - .github/workflows/discoverability-bootstrap.yml
 permissions:
   contents: write
   issues: write
 jobs:
-  metadata:
+  discoverability:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
     steps:
-      - name: Repository description and topics
-        run: |
-          gh api --method PATCH "repos/$REPO" -f description='Finch: self-improvement orchestrator — mines session history to detect corrections, breakthroughs, and behavioral patterns.'
-          gh api --method PUT "repos/$REPO/topics" -H "Accept: application/vnd.github+json" -F 'names[]=adaptive-learning' -F 'names[]=ai-agent' -F 'names[]=claude' -F 'names[]=evolution' -F 'names[]=hermes-agent' -F 'names[]=ocas' -F 'names[]=openclaw' -F 'names[]=self-improvement' -F 'names[]=session-mining'
       - name: Standard labels
         continue-on-error: true
         run: |
