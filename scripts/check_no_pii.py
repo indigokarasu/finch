@@ -20,15 +20,20 @@ Two layers:
 USAGE:
   python3 scripts/check_no_pii.py                # scan repo, exit 1 on findings
   python3 scripts/check_no_pii.py --path references/
+  python3 scripts/check_no_pii.py --path references/one.md   # single file
   python3 scripts/check_no_pii.py --list-patterns
 
-Exit 0 = clean, 1 = findings, 2 = bad invocation.
+Exit 0 = clean (and at least one file was actually read), 1 = findings,
+2 = bad invocation, 3 = NOT MEASURED (0 files scanned -- bad path, or
+everything under it was skipped). Never read exit 0 as a pass unless a
+file count was printed alongside it.
 """
 from __future__ import annotations
 
 import argparse
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -110,9 +115,66 @@ def load_denylist() -> list[str]:
     return terms
 
 
+def tracked_files(root: Path) -> set[str] | None:
+    """Repo-relative paths git would actually publish, or None if not a repo.
+
+    The scan answers "is the PUBLIC REPO clean", so the file set that matters
+    is the one a clone receives -- not every file on this disk. A host-only
+    watcher in a gitignored path cannot leak by being present locally, and
+    counting it makes the real leak invisible behind noise it can never fix.
+    """
+    if not (root / ".git").exists() and not (root.parent / ".git").exists():
+        return None
+    try:
+        out = subprocess.run(["git", "ls-files", "-z"], cwd=root,
+                             capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    return {p for p in out.stdout.split("\0") if p}
+
+
+def tracked_but_ignored(tracked: set[str], root: Path) -> list[str]:
+    """Tracked files that a .gitignore pattern claims to exclude.
+
+    .gitignore governs only untracked files. A pattern added after a file was
+    committed never applies to it, so the ignore list can look exhaustive and
+    correct while the file it was written for is still shipping. That is not a
+    hypothetical here: `scripts/*_watch.py` had covered the host-only watchers
+    since 2026-09-26, and one committed on 2026-09-27 kept publishing another
+    profile's name because the pattern could not reach it. An ignore rule a
+    tracked file has already escaped is decoration, so the gate reports the
+    contradiction instead of trusting the list.
+    """
+    if not tracked:
+        return []
+    try:
+        proc = subprocess.run(["git", "check-ignore", "--stdin"], cwd=root,
+                              input="\n".join(sorted(tracked)) + "\n",
+                              capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return sorted(p for p in proc.stdout.split("\n") if p.strip())
+
+
 def iter_files(root: Path):
     # Optimize traversal: use os.walk to prune skipped directories (e.g., node_modules, .git, .venv)
     # before recursing into them, and use tuple str.endswith for suffix filtering.
+    #
+    # A FILE root must yield that file. os.walk() on a non-directory path
+    # yields NOTHING at all, so passing `--path some/file.py` scanned zero
+    # files and reported "OK: no PII patterns detected" -- a safe-direction
+    # false negative on a file that held 35 real findings. Every
+    # single-file measurement this repo documents (SKILL.md's own guidance to
+    # "measure a single file with --path <file>") was silently vacuous until
+    # this was fixed. An empty scan must never be able to read as a pass, so
+    # the file case is handled explicitly and a zero-file scan is an error.
+    if root.is_file():
+        if root.name.endswith(SKIP_SUFFIX_PARTS) or root.name == DENYLIST_FILE.name:
+            return
+        yield root
+        return
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for name in sorted(filenames):
@@ -173,24 +235,72 @@ def main() -> int:
               + ("" if denylist else f"  (create {DENYLIST_FILE.name} to add names)"))
 
     findings = 0
+    scanned = 0
+    # Shippable vs host-local. The question this gate exists to answer is
+    # "would a clone of this repo leak?", so a finding in a gitignored
+    # host-only file is not this gate's business -- and burying the real leak
+    # under 85 findings that cannot ship is how 54 real ones stayed invisible
+    # long enough to be counted as "pre-existing". Both numbers are printed:
+    # the second is context, never a substitute for the first.
+    tracked = tracked_files(REPO)
+    ship = 0
+    local = 0
     for f in iter_files(root):
         try:
             text = f.read_text(encoding="utf-8", errors="ignore")
         except Exception:
             continue
+        scanned += 1
+        try:
+            rel_repo = f.resolve().relative_to(REPO).as_posix()
+        except ValueError:
+            rel_repo = str(f)
+        ships = tracked is None or rel_repo in tracked
         for lineno, kind, hit, hint in scan_text(text, denylist):
             findings += 1
+            if ships:
+                ship += 1
+            else:
+                local += 1
             shown = hit if kind == "denylist" else (
                 hit[:4] + "…" + hit[-6:] if len(hit) > 14 else hit)
             rel = f.relative_to(root) if str(f).startswith(str(root)) else f
-            print(f"  {rel}:{lineno}: [{kind}] {shown}  -> {hint}")
+            tag = "" if ships else "  (gitignored, does not ship)"
+            print(f"  {rel}:{lineno}: [{kind}] {shown}  -> {hint}{tag}")
 
-    if findings:
-        print(f"\nFAIL: {findings} potential PII finding(s).")
+    # A scan that examined zero files is NOT a clean scan. Reporting OK here
+    # would make "I pointed the gate at the wrong path" and "the repo is clean"
+    # the same output -- the same conflation that let the file-root bug above
+    # hide 35 findings behind a green result. Distinct exit code so a caller
+    # can never mistake an empty measurement for a pass.
+    if scanned == 0:
+        print(f"\nNOT MEASURED: 0 files scanned under {root} "
+              f"(bad path, or everything here was skipped).", file=sys.stderr)
+        return 3
+
+    # The .gitignore/index contradiction is a finding in its own right: a file
+    # the ignore list claims to exclude is still in the commit, so the list is
+    # not the safety net it appears to be.
+    escapes = tracked_but_ignored(tracked, REPO) if tracked else []
+    if escapes:
+        print(f"\nFAIL: {len(escapes)} tracked file(s) are matched by .gitignore but "
+              f"still committed — the ignore rule cannot reach them:")
+        for p in escapes:
+            print(f"  {p}   -> git rm --cached '{p}'")
+
+    if ship:
+        print(f"\nFAIL: {ship} PII finding(s) that WOULD SHIP "
+              f"({local} more in gitignored host-only files), "
+              f"across {scanned} scanned file(s).")
         print("Genericise before committing — see references/reference-file-workflow.md")
         return 1
-    if not args.quiet:
-        print("\nOK: no PII patterns detected.")
+    if escapes:
+        return 1
+    if local and not args.quiet:
+        print(f"\nOK: no PII in any file that ships ({scanned} scanned; "
+              f"{local} finding(s) confined to gitignored host-only files).")
+    elif not args.quiet:
+        print(f"\nOK: no PII patterns detected in {scanned} file(s).")
     return 0
 
 
