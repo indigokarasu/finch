@@ -34,28 +34,69 @@ TRIGGER_GROWTH_MB_24H = 5 * 1024  # 5 GB
 MIN_BASELINE_AGE_H = 1.0
 
 HOME_DIR = os.path.expanduser("~")
-PROFILE = os.environ.get("HERMES_PROFILE", "")
+PROFILE = os.environ.get("HERMES_PROFILE", "").strip()
+# The platform's default data dir carries an optional suffix, so the default
+# home is not always literally ~/.hermes. Mirrors hermes_constants'
+# _get_platform_default_hermes_home() rather than hardcoding a path.
+_DATA_SUFFIX = os.environ.get("HERMES_DATA_DIR_SUFFIX", "")
+
+
+def _default_hermes_home():
+    return os.path.join(HOME_DIR, ".hermes" + _DATA_SUFFIX)
+
+
+def _profile_dir_ok(cand):
+    """True if `cand` names a real profile directory under the default home."""
+    if not cand or cand in (".", "..") or os.sep in cand:
+        return False
+    return os.path.isdir(os.path.join(_default_hermes_home(), "profiles", cand))
 
 
 def _resolve_profile():
     """Find this host's profile name, preferring the environment.
 
-    Order: $HERMES_PROFILE, then the profile this script itself lives under.
-    A script at .../profiles/<name>/skills/<skill>/scripts/ is inside <name> by
-    construction, so that is a general rule derived from our own path, not a
-    baked-in host value. Needed because cron sessions do not always export
-    HERMES_PROFILE -- when they do not, the DB section below used to render
-    EMPTY, which reads as "no bloat" when it actually means "not measured".
-    That is a false negative in the safe direction, i.e. the worst kind here.
+    Order: $HERMES_PROFILE, then $HERMES_HOME's own basename, then the default
+    home's `active_profile` marker, then the profile this script lives under.
+    Every rule is derived from the environment or from this script's own
+    location -- no host value is baked in, so the same code works anywhere.
+
+    Why the two middle rules exist (measured 2026-09-30, four passes after
+    clause (d) recorded the symptom): `self_path` can only fire when the script
+    physically sits under .../profiles/<name>/..., which is true of the copy
+    installed inside a profile's skill dir and FALSE of a repo checkout under
+    ~/projects/... -- so the check that was supposed to prevent an empty DB
+    section could never fire on a repo copy, and the section rendered EMPTY,
+    which reads as "no bloat" when it actually means "not measured". That is a
+    false negative in the safe direction, i.e. the worst kind here.
+
+    $HERMES_HOME points AT a profile directory when a profile is active, and
+    the platform's own resolution (hermes_constants.get_hermes_home) honours
+    that env var ahead of the default home, so reading it here matches the
+    agent's own rule instead of adding a fourth, private one.
     """
     if PROFILE:
         return PROFILE, "env"
+
+    hermes_home = os.environ.get("HERMES_HOME", "").strip()
+    if hermes_home:
+        cand = os.path.basename(os.path.normpath(hermes_home))
+        if _profile_dir_ok(cand):
+            return cand, "hermes_home"
+
+    try:
+        with open(os.path.join(_default_hermes_home(), "active_profile")) as fh:
+            cand = fh.read().strip()
+    except OSError:
+        cand = ""
+    if _profile_dir_ok(cand):
+        return cand, "active_profile"
+
     here = os.path.abspath(__file__)
     parts = here.split(os.sep)
     for i, p in enumerate(parts):
         if p == "profiles" and i + 1 < len(parts):
             cand = parts[i + 1]
-            if os.path.isdir(os.path.join(HOME_DIR, ".hermes", "profiles", cand)):
+            if _profile_dir_ok(cand):
                 return cand, "self_path"
     return "", "unresolved"
 
@@ -144,7 +185,7 @@ def top_dirs(paths=None, depth=2, limit=15):
     return out[:limit]
 
 
-def reclaim_candidates():
+def _reclaim_candidates(in_use):
     """Large model-weight files, sized by (inode, nlink) instead of by du.
 
     ``du`` counts a hardlinked file once per name it finds, so a weight that is
@@ -179,17 +220,65 @@ def reclaim_candidates():
                     continue
                 seen_inodes[key] = [p, 1, st.st_size, st.st_nlink]
     for p, links, size, nlink in seen_inodes.values():
-        reclaimable = links == 1 and nlink == 1
+        hardlink_unique = links == 1 and nlink == 1
+        # A file can be hardlink-unique AND live: the weight a service is
+        # reading on every request is the only name of its inode, so the
+        # hardlink rule alone calls it free. Subtract live use, not rename it.
+        live = p in in_use
+        reclaimable = hardlink_unique and not live
         out.append({
             "path": p,
             "size_mb": round(size / 1048576, 1),
             "nlink": nlink,
             "other_links": links - 1,
             "du_would_report_mb": round(size / 1048576, 1),
+            "in_use_by_running_process": live,
             "truly_reclaimable_mb": round(size / 1048576, 1) if reclaimable else 0.0,
         })
     out.sort(key=lambda r: -r["size_mb"])
     return out[:12]
+
+
+def in_use_paths():
+    """Absolute paths named by a RUNNING process -- its argv, or a file it holds open.
+
+    ``reclaim_candidates()`` is hardlink-correct but has no way to know that a
+    path is an argument of a live service, so a weight the running daemon reads
+    on every request is reported as free. Deleting it does not fail loudly -- it
+    works until the next inference, which is the worst shape a reclaim bug can
+    have. Two independent sources, because either alone is incomplete: argv
+    catches the ``-m /path/model.gguf`` case, open FDs catch the case where a
+    service inherited the fd from a parent or loaded the file then kept it.
+    A path can also be in use while being genuinely reclaimable later, so this is
+    reported as a set for the caller to subtract, never as a deletion decision.
+    General rule (walk /proc), not a host value.
+    """
+    out = set()
+    for piddir in glob.glob("/proc/[0-9]*"):
+        pid = os.path.basename(piddir)
+        try:
+            with open(os.path.join(piddir, "cmdline"), "rb") as fh:
+                for tok in fh.read().split(b"\0"):
+                    if tok.startswith(b"/") and os.path.sep.encode() in tok[1:]:
+                        out.add(os.fsdecode(tok.rstrip(b"/")))
+        except OSError:
+            continue
+        fddir = os.path.join(piddir, "fd")
+        try:
+            fds = os.listdir(fddir)
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                out.add(os.path.realpath(os.path.join(fddir, fd)))
+            except OSError:
+                continue
+    return out
+
+
+def reclaim_candidates():
+    """Public entry: hardlink-correct reclaim sizing, discounted by live process use."""
+    return _reclaim_candidates(in_use=in_use_paths())
 
 
 def deleted_open_leaks(threshold=50, top=8):
@@ -320,6 +409,9 @@ def main():
         "deleted_open_leaks": leaks,
         "reclaim_candidates": reclaim,
         "reclaim_total_true_mb": round(sum(r["truly_reclaimable_mb"] for r in reclaim), 1),
+        "reclaim_in_use_mb": round(
+            sum(r["size_mb"] for r in reclaim if r["in_use_by_running_process"]), 1
+        ),
         "reclaim_du_overreport_mb": round(
             sum(r["du_would_report_mb"] - r["truly_reclaimable_mb"] for r in reclaim), 1
         ),
