@@ -18,6 +18,7 @@ import glob
 import json
 import math
 import os
+import struct
 import sqlite3
 import subprocess
 import time
@@ -325,8 +326,26 @@ def reclaim_candidates():
 
 
 def deleted_open_leaks(threshold=50, top=8):
-    """Find processes holding many deleted-but-open files (space held by no path)."""
+    """Find processes holding many deleted-but-open files (space held by no path).
+
+    ``threshold`` is a *count of file descriptors*, not a size. The default of
+    50 is high enough that a process leaking hundreds of small deleted files --
+    the common shape for a browser or a rotating log -- falls under it and the
+    report says ``[]``. That reads as "no invisible space", which is a false
+    negative in the dangerous direction: this section exists precisely to rule
+    out usage that no directory listing can see, so an empty list is the
+    reading that most needs to be qualified. ``[]`` and "the biggest holder is
+    under 50 fds" are different claims, and only the second is what was
+    measured.
+
+    Both are now reported: the thresholded list keeps its original meaning, and
+    a new total over ALL holders, regardless of count, says how much space is
+    held with no path. A reader wanting the old behaviour reads
+    ``deleted_open_leaks``; a reader wanting the truth about invisible space
+    reads ``deleted_open_total_mb``.
+    """
     results = []
+    all_rows = []
     for fddir in glob.glob("/proc/[0-9]*/fd"):
         pid = fddir.split("/")[2]
         n = 0
@@ -345,6 +364,8 @@ def deleted_open_leaks(threshold=50, top=8):
                 continue
             n += 1
             total += st.st_size
+        if n:
+            all_rows.append((total, n, pid))
         if n >= threshold:
             try:
                 with open(f"/proc/{pid}/cmdline", "rb") as fh:
@@ -356,7 +377,47 @@ def deleted_open_leaks(threshold=50, top=8):
                 "cmd": cmd[:160], "readable": newest_ok,
             })
     results.sort(key=lambda r: r["mb"], reverse=True)
-    return results[:top]
+    return results[:top], all_rows
+
+
+def _wal_live_bytes(wal_path):
+    """Bytes of a -wal file that are LIVE frames, not a stale high-water tail.
+
+    A SQLite checkpoint copies committed frames into the database and resets
+    the WAL header's salt, but does not shrink the file. The bytes past the new
+    end are on disk, counted by du and by getsize, and belong to no
+    transaction. Reading getsize() there reports a WAL that has been fully
+    checkpointed as though a reader were pinning it, which is a false alarm
+    that invites a pointless "fix" on a healthy database.
+
+    The live region is the prefix of frame headers whose salt equals the salt
+    in the current WAL header. The 32-byte header is always live and is
+    counted, so a WAL with every frame live returns exactly the file size and a
+    fully-checkpointed one returns 32. No PRAGMA, no write, no checkpoint
+    triggered. Returns the file size unchanged if the header is not a WAL
+    header at all.
+    """
+    try:
+        with open(wal_path, "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return 0
+    if len(raw) < 32:
+        return len(raw)
+    magic, _fmt, psize, _ckpt, salt1, salt2, _c1, _c2 = struct.unpack(">8I", raw[:32])
+    if magic not in (0x377F0682, 0x377F0683) or psize <= 0:
+        return len(raw)
+    frame_bytes = 24 + psize
+    frames = (len(raw) - 32) // frame_bytes
+    live = 0
+    for i in range(frames):
+        off = 32 + i * frame_bytes
+        _pg, _dbsize, fs1, fs2, _fc1, _fc2 = struct.unpack(">6I", raw[off:off + 24])
+        if fs1 == salt1 and fs2 == salt2:
+            live = i + 1
+        else:
+            break
+    return 32 + live * frame_bytes
 
 
 def db_bloat():
@@ -377,13 +438,27 @@ def db_bloat():
             out.append({"db": name, "size_mb": round(size_mb, 1), "error": str(e)})
             continue
         free_mb = free * psz / 1048576.0
-        out.append({
+        row = {
             "db": name,
             "size_mb": round(size_mb, 1),
             "free_mb": round(free_mb, 1),
             "bloat_pct": round(free_mb / size_mb * 100.0, 1) if size_mb else 0.0,
             "used_mb": round((pcnt - free) * psz / 1048576.0, 1),
-        })
+        }
+        # A WAL-mode DB's sidecars are real bytes on the filesystem and are
+        # invisible to getsize(db) and to page_count. state.db's -wal was 64 MB
+        # against a 736 MB database -- 8% of the file's footprint reported by
+        # no field in this section. Worse, a checkpoint resets the WAL's
+        # contents in place and does NOT shrink the file, so file size measures
+        # the high-water mark and not the live frame count: a 64 MB -wal that
+        # looks stuck is usually a completed checkpoint that never truncated.
+        # Read the header's salt against the frame headers to get live frames.
+        wal = path + "-wal"
+        if os.path.exists(wal):
+            wal_bytes = os.path.getsize(wal)
+            row["wal_file_mb"] = round(wal_bytes / 1048576.0, 1)
+            row["wal_live_mb"] = round(_wal_live_bytes(wal) / 1048576.0, 1)
+        out.append(row)
     return out
 
 
@@ -408,7 +483,7 @@ def main():
             # Too recent to extrapolate from - report unknown, not a bogus rate.
             growth_stale = True
 
-    leaks = deleted_open_leaks()
+    leaks, leak_rows = deleted_open_leaks()
     dbs = db_bloat()
     dirs = top_dirs()
     reclaim = reclaim_candidates()
@@ -450,6 +525,14 @@ def main():
         "growth_measured": growth_mb_24h is not None,
         "baseline_written": baseline_written,
         "deleted_open_leaks": leaks,
+        "deleted_open_leaks_threshold_fds": 50,
+        "deleted_open_total_mb": round(
+            sum(t for t, _n, _p in leak_rows) / 1048576.0, 2
+        ),
+        "deleted_open_holders": len(leak_rows),
+        "deleted_open_top_holder_mb": (
+            round(max(leak_rows)[0] / 1048576.0, 2) if leak_rows else 0.0
+        ),
         "reclaim_candidates": reclaim,
         "reclaim_total_true_mb": round(sum(r["truly_reclaimable_mb"] for r in reclaim), 1),
         "reclaim_in_use_mb": round(
