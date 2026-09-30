@@ -19,18 +19,26 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from finch_blocked_config_watch import sweep, annotate_registry, _registry  # noqa: E402
 
 
 # ── --help guard ───────────────────────────────────────────────────────────
-# Placed before every sweep this module runs under __main__: it is a
-# LIVE-fixture directions test, so an unguarded --help would execute the real
-# job and rewrite the very state it measures. Same class as the writer-order
-# bug in finch_ledger_write.py, one layer up — the guard belongs BEFORE the
-# work, not after it.
+# BEFORE the dependency import, not after. This is a LIVE-fixture directions
+# test whose only guide to its arguments is --help, so an unguarded --help
+# would execute the real job and rewrite the very state it measures. Same class
+# as the writer-order bug in finch_ledger_write.py, one layer up.
+#
+# The guard must also sit above the import because
+# finch_blocked_config_watch is a HOST-LOCAL watcher: .gitignore:66 keeps
+# scripts/*_watch.py unpublished, so on a CI runner that import raises
+# ModuleNotFoundError and the whole --help contract breaks. Serving --help
+# needs no dependency, so it is answered before anything is imported. This was
+# the real defect behind runs 36681538632 / 36683617802 / 36684493294 (2026-09-30
+# 07:03-07:34Z), where test_all_scripts_help failed on this file alone.
 if any(a in ("-h", "--help", "help") for a in sys.argv[1:]):
     sys.stdout.write((__doc__ or "").strip() + "\n")
     sys.exit(0)
+
+from finch_blocked_config_watch import sweep, annotate_registry, _registry  # noqa: E402
 
 results = []
 
