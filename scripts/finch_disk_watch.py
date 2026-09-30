@@ -144,6 +144,54 @@ def top_dirs(paths=None, depth=2, limit=15):
     return out[:limit]
 
 
+def reclaim_candidates():
+    """Large model-weight files, sized by (inode, nlink) instead of by du.
+
+    ``du`` counts a hardlinked file once per name it finds, so a weight that is
+    both served from a service directory and present in a content-addressed
+    blob store is double-counted. Deleting one name then reclaims ZERO bytes
+    while every du-based figure promises otherwise -- a 4.2 GB over-estimate on
+    the moondream2 set alone. Size by inode: a file whose ``nlink > 1`` shares
+    its bytes with another name, so only the LAST name is worth deleting. This
+    is a general rule (any hardlink), not a host value.
+    """
+    seen_inodes = {}
+    out = []
+    for base in (HOME_DIR, "/opt", "/usr/local", "/usr/share"):
+        for dirpath, _dirnames, filenames in os.walk(base):
+            # A blob store's own names are the OTHER links; keep them out of the
+            # walk so the reported candidate is the copy a service can drop.
+            if "/blobs/" in dirpath or dirpath.endswith("/.git"):
+                continue
+            for n in filenames:
+                if not n.endswith((".gguf", ".safetensors", ".bin", ".pt", ".onnx")):
+                    continue
+                p = os.path.join(dirpath, n)
+                try:
+                    st = os.lstat(p)
+                except OSError:
+                    continue
+                if st.st_size < 200 * 1024 * 1024:
+                    continue
+                key = st.st_ino
+                if key in seen_inodes:
+                    seen_inodes[key][1] += 1
+                    continue
+                seen_inodes[key] = [p, 1, st.st_size, st.st_nlink]
+    for p, links, size, nlink in seen_inodes.values():
+        reclaimable = links == 1 and nlink == 1
+        out.append({
+            "path": p,
+            "size_mb": round(size / 1048576, 1),
+            "nlink": nlink,
+            "other_links": links - 1,
+            "du_would_report_mb": round(size / 1048576, 1),
+            "truly_reclaimable_mb": round(size / 1048576, 1) if reclaimable else 0.0,
+        })
+    out.sort(key=lambda r: -r["size_mb"])
+    return out[:12]
+
+
 def deleted_open_leaks(threshold=50, top=8):
     """Find processes holding many deleted-but-open files (space held by no path)."""
     results = []
@@ -231,6 +279,7 @@ def main():
     leaks = deleted_open_leaks()
     dbs = db_bloat()
     dirs = top_dirs()
+    reclaim = reclaim_candidates()
 
     pct_met = pct >= TRIGGER_PCT
     growth_met = growth_mb_24h is not None and growth_mb_24h >= TRIGGER_GROWTH_MB_24H
@@ -269,6 +318,11 @@ def main():
         "growth_measured": growth_mb_24h is not None,
         "baseline_written": baseline_written,
         "deleted_open_leaks": leaks,
+        "reclaim_candidates": reclaim,
+        "reclaim_total_true_mb": round(sum(r["truly_reclaimable_mb"] for r in reclaim), 1),
+        "reclaim_du_overreport_mb": round(
+            sum(r["du_would_report_mb"] - r["truly_reclaimable_mb"] for r in reclaim), 1
+        ),
         "db_bloat": dbs,
         "db_bloat_measured": bool(dbs) or PROFILE_SOURCE != "unresolved",
         "profile": PROFILE,
@@ -310,6 +364,16 @@ def main():
         print(f"growth: {growth_mb_24h:+.0f} MB/24h normalised (baseline {age_h:.1f}h old)  "
               f"trigger={TRIGGER_GROWTH_MB_24H} -> {'MET' if growth_met else 'unmet'}")
     print(f"\nVERDICT: {verdict}")
+
+    print("\n=== LARGE MODEL WEIGHTS (sized by inode, NOT du) ===")
+    if not reclaim:
+        print(f"  none >= 200 MB found under {HOME_DIR}, /opt, /usr/local, /usr/share")
+    for r in reclaim:
+        flag = "" if r["truly_reclaimable_mb"] else "  <-- HARDFLINKED: du counts it, deleting it frees 0 B"
+        print(f"  {r['size_mb']:>7.0f} MB  nlink={r['nlink']} other_links={r['other_links']}  "
+              f"reclaim {r['truly_reclaimable_mb']:>7.0f} MB  {r['path']}{flag}")
+    print(f"  TOTAL truly reclaimable {sum(r['truly_reclaimable_mb'] for r in reclaim):.0f} MB; "
+          f"du would over-report by {sum(r['du_would_report_mb'] - r['truly_reclaimable_mb'] for r in reclaim):.0f} MB")
 
     print("\n=== DB BLOAT (free-list is reclaimable; used is real data) ===")
     if not dbs:
