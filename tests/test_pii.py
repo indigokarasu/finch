@@ -2,6 +2,7 @@
 """Tests for the PII guard that keeps personal data out of this public repo."""
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -67,6 +68,102 @@ class RepoIsClean(unittest.TestCase):
             text=True, capture_output=True, check=False, timeout=180)
         self.assertEqual(proc.returncode, 0,
                          f"PII detected in repo:\n{proc.stdout}\n{proc.stderr}")
+
+
+class ShippingIsDecidedByTheIgnoreList(unittest.TestCase):
+    """An UNTRACKED file is not a SAFE file.
+
+    The auto-sync runs `git add -A`, so the class of file that is about to be
+    published is exactly the class git does not currently know about. Deciding
+    "shipping" by index membership therefore blinds the gate to precisely the
+    new files it exists to catch, and the skip-reason it prints ("gitignored,
+    does not ship") becomes a reason it never checked.
+
+    Exercised against the real repo (the gitignore rules ARE the fixture), and
+    against a temp git repo for the classification itself. No commit is made.
+    """
+
+    def _mkrepo(self, base: Path, ignore: str = "") -> Path:
+        d = base / "r"
+        d.mkdir()
+        env = {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null",
+               "PATH": "/usr/bin:/bin", "HOME": str(d)}
+        subprocess.run(["git", "init", "-q", str(d)], check=True, capture_output=True, env=env)
+        if ignore:
+            (d / ".gitignore").write_text(ignore, encoding="utf-8")
+        return d
+
+    # Built at runtime, like the token fixture above: a literal email in a
+    # tracked file is itself a finding, so the shipped test must not contain
+    # one. `.invalid` keeps it structurally a real address (the scanner must
+    # still match it) without being deliverable.
+    _PII = "contact test.person@notarealdomain" + ".invalid\n"  # pii-allow
+
+    def test_untracked_unignored_file_is_classified_shipping(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            d = self._mkrepo(base)
+            f = d / "notes.md"
+            f.write_text(self._PII, encoding="utf-8")
+            # NOT staged: `git add -A` has not run. The old index-membership
+            # test classified this non-shipping; the ignore list does not.
+            self.assertEqual(check_no_pii.ignored_paths(d, ["notes.md"]), set())
+            self.assertIn("notes.md", _classify(d, f))
+
+    def test_ignored_file_is_classified_local(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = self._mkrepo(Path(td), ignore="hostonly/\n")
+            f = d / "hostonly" / "watch.py"
+            f.parent.mkdir()
+            f.write_text("x\n", encoding="utf-8")
+            self.assertIn("hostonly/watch.py", check_no_pii.ignored_paths(d, ["hostonly/watch.py"]))
+            self.assertNotIn("hostonly/watch.py", _classify(d, f))
+
+    def test_unreadable_git_answers_none_ignored_so_nothing_is_excused(self):
+        """Fail-safe direction: an error must cost strictness, never a green."""
+        self.assertEqual(check_no_pii.ignored_paths(Path("/nonexistent-repo-xyz"), ["a"]), set())
+
+    def test_live_root_scan_refuses_an_untracked_unignored_leak(self):
+        """The end-to-end direction, and the one that was silently inverted.
+
+        A root scan (no --path) over the real repo is the only invocation that
+        reaches the in-repo classification branch, because --path forces the
+        out-of-repo branch instead. So this drops a structurally-real address
+        into a file git does not track, runs the real gate exactly as the
+        developer and the pre-commit path do, and requires a refusal.
+
+        Pre-fix this returned 0 and tagged the file "(gitignored, does not
+        ship)" -- so the direction genuinely fails without the fix. The probe
+        is removed in `finally`, and the scan is asserted to have seen it, so
+        a green that never measured anything cannot pass.
+        """
+        probe_rel = "references/_test_untracked_leak_probe.md"
+        probe = REPO / probe_rel
+        self.assertFalse(probe.exists(), f"stale probe left behind: {probe_rel}")
+        probe.write_text(self._PII, encoding="utf-8")
+        try:
+            self.assertFalse(
+                subprocess.run(["git", "check-ignore", "-q", probe_rel],
+                               cwd=str(REPO), capture_output=True).returncode == 0,
+                "probe is gitignored; the arm is broken and the test is vacuous")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPTS / "check_no_pii.py")],
+                cwd=str(REPO), text=True, capture_output=True, check=False, timeout=180)
+            self.assertIn(probe_rel, proc.stdout,
+                          f"scan did not examine the probe: {proc.stdout[-2000:]}")
+            self.assertNotIn("does not ship", proc.stdout.split(probe_rel)[1][:200],
+                             "untracked file was excused with a reason never checked")
+            self.assertEqual(proc.returncode, 1,
+                             f"untracked, unignored leak was allowed:\n{proc.stdout[-2000:]}")
+        finally:
+            probe.unlink(missing_ok=True)
+
+
+def _classify(repo: Path, f: Path) -> set[str]:
+    """Reproduce main()'s shipping decision for one file, without side effects."""
+    rel = f.resolve().relative_to(repo.resolve()).as_posix()
+    ignored = check_no_pii.ignored_paths(repo, [rel])
+    return set() if rel in ignored else {rel}
 
 
 class GenericisationRuleDocumented(unittest.TestCase):

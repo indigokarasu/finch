@@ -26,6 +26,49 @@ import subprocess
 import sys
 import tempfile
 
+# ── Confined delete ────────────────────────────────────────────────────────
+# A test that deletes real data is a worse defect than a test that fails, so
+# every removal in this suite goes through one function with a structural
+# check rather than a bare shutil.rmtree. The invariant is REGISTER-AT-
+# CREATION, not "lives under /tmp": two suites here deliberately build their
+# fixture tree outside /tmp (a profile-scoped scratch dir, a synthetic $HOME)
+# so the watcher's path resolution is exercised against the real layout, and
+# a /tmp-only allowlist would make the guard refuse the fixtures' own
+# directories -- a test failing for a reason that has nothing to do with the
+# world. A path is therefore deletable only if THIS MODULE created it, which
+# catches the dangerous shape (a path assembled from an env var, a glob, or a
+# fixture string) without constraining where the suite may work.
+_CREATED = set()
+
+
+def _register(path):
+    _CREATED.add(os.path.realpath(path))
+    return path
+
+
+def mkfixture(*args, **kwargs):
+    """tempfile.mkdtemp that remembers what it made."""
+    return _register(tempfile.mkdtemp(*args, **kwargs))
+
+
+def rmtree_confined(path, *, allow_missing=True):
+    """Delete `path` only if this module created it. Refuse otherwise."""
+    real = os.path.realpath(path)
+    # A registered root OR anything beneath it: fixtures legitimately build
+    # sub-trees (a launder/ dir inside a ledger temp dir) and deleting those
+    # individually is still deleting only what this suite made. Anything else
+    # -- a path assembled from an env var, a glob, or a fixture string -- is
+    # refused, because that is the shape that eats live state.
+    if not any(real == r or real.startswith(r + os.sep) for r in _CREATED):
+        raise RuntimeError(
+            "refusing to delete %s: not created by this suite. A test fixture "
+            "must never name a path it did not make -- that shape is how a "
+            "suite deletes live state." % real)
+    if not os.path.exists(real):
+        if allow_missing:
+            return
+        raise FileNotFoundError(real)
+    shutil.rmtree(real, ignore_errors=True)
 HERE = os.path.dirname(os.path.abspath(__file__))
 GUARD = os.path.join(HERE, "finch_ledger_guard.py")
 UTC = datetime.timezone.utc
@@ -104,7 +147,7 @@ def main():
                     help="also re-check this ledger (case 9); never written to")
     ap.parse_args()
 
-    tmpdir = tempfile.mkdtemp(prefix="ledger_guard_test_")
+    tmpdir = mkfixture(prefix="ledger_guard_test_")
     try:
         led = os.path.join(tmpdir, "task-list.json")
         base = fixture()
@@ -309,9 +352,9 @@ def main():
               % (rc, "OK" if ok else "*** FALSE POSITIVE ***"))
         if not ok:
             fails.append("case20 honest rewrite falsely reported as laundered (rc=%s)" % rc)
-        shutil.rmtree(ltmp2, ignore_errors=True)
+        rmtree_confined(ltmp2)
     finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
+        rmtree_confined(tmpdir)
 
     journal_cases()
     print("\n%s" % ("ALL CASES PASSED" if not fails
@@ -332,8 +375,8 @@ def main():
 # tree is never written to.
 # =========================================================================
 def journal_cases():
-    jtmp = tempfile.mkdtemp(prefix="journal_guard_test_")
-    ltmp = tempfile.mkdtemp(prefix="journal_guard_ledger_")
+    jtmp = mkfixture(prefix="journal_guard_test_")
+    ltmp = mkfixture(prefix="journal_guard_ledger_")
     try:
         # A SEPARATE, valid ledger for these cases. The original module-scope
         # version reused the main fixture ledger, which no longer exists once
@@ -381,7 +424,7 @@ def journal_cases():
             fails.append("case10 journal finding wrongly changed the exit code")
 
         # --- case 11: clean journals must NOT be flagged -------------------
-        shutil.rmtree(jtmp)
+        rmtree_confined(jtmp)
         os.makedirs(jtmp)
         mkjournal("scan-0300.json", {"scan_number": 1, "timestamp": past})
         mkjournal("scan-0400.json", {"scan_number": 2, "timestamp": past})
@@ -394,7 +437,7 @@ def journal_cases():
         # --- case 12: a work-* journal's scan_number must NOT break
         # monotonicity -- work-*.json carries the scan it ran AGAINST, so #5
         # between scan #4 and #6 is legitimate. The pre-fix code flagged this.
-        shutil.rmtree(jtmp)
+        rmtree_confined(jtmp)
         os.makedirs(jtmp)
         mkjournal("scan-0500.json", {"scan_number": 4, "timestamp": past}, 0)
         mkjournal("work-0600.json", {"scan_number": 5, "source": "finch:work",
@@ -408,7 +451,7 @@ def journal_cases():
             fails.append("case12 work-* scan_number misread as non-monotonic")
 
         # --- case 13: genuine duplicate scan_number IS reported -----------
-        shutil.rmtree(jtmp)
+        rmtree_confined(jtmp)
         os.makedirs(jtmp)
         mkjournal("scan-0800.json", {"scan_number": 7, "timestamp": past}, 0)
         mkjournal("scan-0900.json", {"scan_number": 7, "timestamp": past}, 60)
@@ -420,7 +463,7 @@ def journal_cases():
             fails.append("case13 duplicate scan_number not reported")
 
         # --- case 14: unreadable journal must not abort the measurement ---
-        shutil.rmtree(jtmp)
+        rmtree_confined(jtmp)
         os.makedirs(jtmp)
         mkjournal("scan-1000.json", {"scan_number": 8, "timestamp": past})
         with open(os.path.join(jtmp, "scan-1100.json"), "w") as fh:
@@ -433,7 +476,7 @@ def journal_cases():
             fails.append("case14 corrupt journal broke measurement")
 
         # --- case 15: offset-aware parsing (timestamps with -07:00) -------
-        shutil.rmtree(jtmp)
+        rmtree_confined(jtmp)
         os.makedirs(jtmp)
         off = (datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=-7)))
                - datetime.timedelta(hours=3)).isoformat()
@@ -454,7 +497,7 @@ def journal_cases():
         # STRUCTURAL scan_number, so the fixture needs two of those to span
         # the prose numbers -- with only one, the range collapses and the case
         # proves nothing.
-        shutil.rmtree(jtmp)
+        rmtree_confined(jtmp)
         os.makedirs(jtmp)
         mkjournal("scan-2000.json", {"scan_number": 10, "timestamp": past}, 0)
         mkjournal("scan-2050.json", {"scan_number": 14, "timestamp": past}, 0)
@@ -473,8 +516,8 @@ def journal_cases():
             fails.append("case16 only the first prose number was harvested (got %s, want 1)" % got)
 
     finally:
-        shutil.rmtree(jtmp, ignore_errors=True)
-        shutil.rmtree(ltmp, ignore_errors=True)
+        rmtree_confined(jtmp)
+        rmtree_confined(ltmp)
 
 
 if __name__ == "__main__":

@@ -53,8 +53,31 @@ def record(name, ok, detail):
     print("%-4s %-46s %s" % ("PASS" if ok else "FAIL", name, detail))
 
 
-COMMIT = datetime.datetime(2026, 9, 28, 3, 28, 58, 906576, tzinfo=UTC)
-NOW = datetime.datetime(2026, 9, 28, 4, 35, 0, tzinfo=UTC)
+COMMIT = datetime.datetime.now(UTC) - datetime.timedelta(hours=1)
+NOW = COMMIT + datetime.timedelta(minutes=66)
+# The stamps below were originally pinned to absolute instants, so this suite
+# went RED 2026-09-29T03:28Z on its own: the guard computes the "recent
+# (<=24h)" window against the WALL CLOCK, and a fixture whose commit instant
+# is in the past is permanently outside the window it asserts on. Measured, not
+# guessed -- the same suite failed identically against HEAD and against the
+# working tree, so it was a time bomb rather than a regression from any change.
+#
+# Fix: derive the fixture from the wall clock instead of pinning it. COMMIT is
+# now always 1h old, so it is always inside the 24h window, and every stamp
+# below is written as an OFFSET from COMMIT -- so each direction keeps exactly
+# the delta it was written to test, and keeps testing it tomorrow. A fixture
+# that asserts on a window measured against the clock must not pin the clock.
+
+
+def _at(offset_s, tag="Z"):
+    """An instant OFFSET seconds from COMMIT, formatted for `tag`.
+
+    The whole point: these directions assert on windows measured against the
+    wall clock, so the fixture is expressed as OFFSETS and never as pinned
+    dates. Deltas are what the guard reads; the epoch is not.
+    """
+    return (COMMIT + datetime.timedelta(seconds=offset_s)).strftime(
+        "%Y-%m-%dT%H:%M:%S") + tag
 
 
 def _journals(specs, ledger_mtime, ledger=None, now=NOW):
@@ -80,16 +103,16 @@ def _journals(specs, ledger_mtime, ledger=None, now=NOW):
         os.utime(p, (ledger_mtime.timestamp(), ledger_mtime.timestamp()))
     lp = os.path.join(td, "task-list.json")
     with open(lp, "w") as fh:
-        json.dump(ledger or {"as_of": "2026-09-28T03:00:00Z", "tasks": []}, fh)
+        json.dump(ledger or {"as_of": _at(-1738), "tasks": []}, fh)
     os.utime(lp, (ledger_mtime.timestamp(), ledger_mtime.timestamp()))
     return lp, jd, flg.check(lp, journal_dir=jd, now=now)
 
 
 # --- direction 1: the LIVE shape, attributed to the mislabelled tag ---------
-# started_at digits are UTC (03:20Z), the tag says -07:00. Read as written it
-# is +24661s forward. The cause is the tag, not a clock.
+# started_at digits are UTC (-538s behind the commit), the tag says -07:00.
+# Read as written it is +24661s forward. The cause is the tag, not a clock.
 _lp, _jd, rep = _journals(
-    [("scan-0329.json", {"scan_number": 983, "started_at": "2026-09-28T03:20:00-07:00"})],
+    [("scan-0329.json", {"scan_number": 983, "started_at": _at(-538, "-07:00")})],
     COMMIT)
 ss = rep["journals"]["self_stamp_forward"]
 record("live_shape_is_caught", len(ss) == 1,
@@ -118,7 +141,7 @@ record("recent_member_is_not_called_historical",
 # as UTC exactly as written, so there is no mislabel to point at: this is a
 # forward clock and must be reported as one.
 _lp, _jd, rep2 = _journals(
-    [("scan-9999.json", {"scan_number": 9999, "timestamp": "2026-09-28T09:00:00Z"})],
+    [("scan-9999.json", {"scan_number": 9999, "timestamp": _at(19862)})],
     COMMIT)
 ss2 = rep2["journals"]["self_stamp_forward"]
 record("genuine_forward_is_caught", len(ss2) == 1,
@@ -132,13 +155,13 @@ record("genuine_forward_cause_is_clock",
 # The guard is deliberately biased: a local tag only wins when the digits read
 # back COHERENTLY as UTC, because that bucket is the one a reviewer reads as
 # benign. So a stamp whose digits are incoherent either way must stay in
-# clock-forward. '2026-09-28T09:00:00-07:00' against a 03:28:58Z commit reads
-# 09:00Z as UTC (+329 min, forward) and 16:00Z as tagged (+750 min, forward):
+# clock-forward. _at(19862, '-07:00') against a 03:28:58Z commit reads
+# 09:00Z as UTC (+329 min, forward) and +16:00Z as tagged (+750 min, forward):
 # no reading places the start before the commit, so the tag cannot be the
 # explanation and absorbing it would hide a live violation.
 _lp, _jd, rep3 = _journals(
     [("scan-8888.json", {"scan_number": 8888,
-                         "timestamp": "2026-09-28T09:00:00-07:00"})],
+                         "timestamp": _at(19862, "-07:00")})],
     COMMIT)
 ss3 = rep3["journals"]["self_stamp_forward"]
 record("incoherent_local_tag_stays_clock_forward",
@@ -152,7 +175,7 @@ record("incoherent_local_tag_stays_clock_forward",
 
 # --- direction 4: a clean journal dir reports nothing at all ---------------
 _lp, _jd, rep4 = _journals(
-    [("scan-0001.json", {"scan_number": 1, "timestamp": "2026-09-28T03:00:00Z"})],
+    [("scan-0001.json", {"scan_number": 1, "timestamp": _at(-1738)})],
     COMMIT)
 record("clean_journal_reports_nothing",
        rep4["journals"]["self_stamp_forward_count"] == 0
@@ -165,6 +188,17 @@ record("clean_journal_reports_nothing",
 # Journal findings have never touched it. Pin that this fix did not start.
 import io
 import contextlib
+
+
+# ── --help guard ───────────────────────────────────────────────────────────
+# Placed before every sweep this module runs under __main__: it is a
+# LIVE-fixture directions test, so an unguarded --help would execute the real
+# job and rewrite the very state it measures. Same class as the writer-order
+# bug in finch_ledger_write.py, one layer up — the guard belongs BEFORE the
+# work, not after it.
+if any(a in ("-h", "--help", "help") for a in sys.argv[1:]):
+    sys.stdout.write((__doc__ or "").strip() + "\n")
+    sys.exit(0)
 
 
 def _exit_code_for(journal_specs, mtime):
@@ -181,14 +215,14 @@ def _exit_code_for(journal_specs, mtime):
 
 
 rc_clean, out_clean = _exit_code_for(
-    [("scan-0001.json", {"scan_number": 1, "timestamp": "2026-09-28T03:00:00Z"})],
+    [("scan-0001.json", {"scan_number": 1, "timestamp": _at(-1738)})],
     COMMIT)
 record("clean_still_exits_zero", rc_clean == 0,
        "exit=%r (a journal finding must not pin a clean ledger non-zero)" % rc_clean)
 
 rc_viol, out_viol = _exit_code_for(
     [("scan-0329.json", {"scan_number": 983,
-                         "started_at": "2026-09-28T03:20:00-07:00"})],
+                         "started_at": _at(-538, "-07:00")})],
     COMMIT)
 record("journal_finding_still_exits_zero", rc_viol == 0,
        "exit=%r -- journal findings are reported, never exit-coded" % rc_viol)

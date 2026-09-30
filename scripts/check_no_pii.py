@@ -135,6 +135,33 @@ def tracked_files(root: Path) -> set[str] | None:
     return {p for p in out.stdout.split("\0") if p}
 
 
+def ignored_paths(root: Path, rels: list[str]) -> set[str]:
+    """Repo-relative paths the ignore list excludes, in ONE git call.
+
+    This is the other half of "would a clone of this repo leak?", and it is
+    the half `tracked_files` cannot answer. `git ls-files` reports the index --
+    what is published RIGHT NOW. The daily auto-sync runs `git add -A`, so an
+    untracked-but-unignored file is published at the next sync: it is exactly
+    the class `git add -A` exists to pick up.
+
+    FAIL-SAFE BY CONSTRUCTION: every error path returns the EMPTY set, which
+    marks nothing as ignored and therefore classifies every finding as
+    shipping. An unreadable ignore list must cost strictness, never a green.
+    (exit 1 = "none are ignored" and is a valid answer, not a failure.)
+    """
+    if not rels:
+        return set()
+    try:
+        out = subprocess.run(["git", "check-ignore", "--stdin", "-z"], cwd=root,
+                             input="\0".join(rels) + "\0",
+                             capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return set()
+    if out.returncode not in (0, 1):
+        return set()
+    return {p for p in out.stdout.split("\0") if p}
+
+
 def tracked_but_ignored(tracked: set[str], root: Path) -> list[str]:
     """Tracked files that a .gitignore pattern claims to exclude.
 
@@ -242,9 +269,26 @@ def main() -> int:
     # under 85 findings that cannot ship is how 54 real ones stayed invisible
     # long enough to be counted as "pre-existing". Both numbers are printed:
     # the second is context, never a substitute for the first.
+    #
+    # "SHIPPING" MUST BE DECIDED BY THE IGNORE LIST, NOT BY INDEX MEMBERSHIP.
+    # Testing "is this in the index" is a claim about the PAST -- it answers
+    # "was it committed", not "will it be". The daily auto-sync runs
+    # `git add -A`, so an untracked-but-unignored file -- precisely what a new
+    # file written moments ago is -- is classified non-shipping, then published
+    # on the next sync. Measured 2026-09-30 on this tree: 5 untracked,
+    # unignored files were each tagged "(gitignored, does not ship)", a tag
+    # that is doubly false (not ignored, and shipping) while the scan still
+    # exits 0. A gate that reports the reason it skipped a finding must not
+    # be able to state a reason it never checked.
+    #
+    # The one thing that IS checked is the ignore list. Anything not excluded
+    # by it is shipping, whether or not git currently knows about the file.
     tracked = tracked_files(REPO)
     ship = 0
     local = 0
+    pending_rels: list[str] = []
+    pending_files: list[Path] = []
+    pending_hits: list[list] = []
     for f in iter_files(root):
         try:
             text = f.read_text(encoding="utf-8", errors="ignore")
@@ -254,9 +298,28 @@ def main() -> int:
         try:
             rel_repo = f.resolve().relative_to(REPO).as_posix()
         except ValueError:
+            # A --path scan of a temp tree (the pre-commit hook's staged
+            # snapshot) lives OUTSIDE REPO, so relative_to raises for EVERY
+            # file. That is not "this file is host-local": it is "I cannot
+            # place this file in the repo at all". Classifying it as
+            # not-shipping made the pre-commit hook structurally incapable of
+            # firing, and CI -- which runs the same gate but only AFTER the
+            # push -- was the sole thing standing between a staged leak and a
+            # PUBLIC repo. A file whose location is unknown is the one case
+            # that must be treated as shipping.
+            ships = True
             rel_repo = str(f)
-        ships = tracked is None or rel_repo in tracked
-        for lineno, kind, hit, hint in scan_text(text, denylist):
+        else:
+            # In-repo: queue the ignore-list decision for the single batched
+            # git call below rather than asking git per file.
+            pending_rels.append(rel_repo)
+            pending_files.append(f)
+            ships = None  # decided in bulk below
+        hits = list(scan_text(text, denylist))
+        if ships is None:
+            pending_hits.append(hits)
+            continue
+        for lineno, kind, hit, hint in hits:
             findings += 1
             if ships:
                 ship += 1
@@ -267,6 +330,26 @@ def main() -> int:
             rel = f.relative_to(root) if str(f).startswith(str(root)) else f
             tag = "" if ships else "  (gitignored, does not ship)"
             print(f"  {rel}:{lineno}: [{kind}] {shown}  -> {hint}{tag}")
+
+    # One batched `git check-ignore` for every in-repo file, then render. This
+    # replaces N subprocess calls with one, and -- more to the point -- it is
+    # the only place the shipping verdict is decided, so there is exactly one
+    # classification code path to test.
+    if pending_rels:
+        ignored = ignored_paths(REPO, pending_rels)
+        for f, hits in zip(pending_files, pending_hits):
+            ships = f.resolve().relative_to(REPO).as_posix() not in ignored
+            for lineno, kind, hit, hint in hits:
+                findings += 1
+                if ships:
+                    ship += 1
+                else:
+                    local += 1
+                shown = hit if kind == "denylist" else (
+                    hit[:4] + "…" + hit[-6:] if len(hit) > 14 else hit)
+                rel = f.relative_to(root) if str(f).startswith(str(root)) else f
+                tag = "" if ships else "  (gitignored, does not ship)"
+                print(f"  {rel}:{lineno}: [{kind}] {shown}  -> {hint}{tag}")
 
     # A scan that examined zero files is NOT a clean scan. Reporting OK here
     # would make "I pointed the gate at the wrong path" and "the repo is clean"
