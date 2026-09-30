@@ -7,11 +7,76 @@ after the fact is not validation -- so the whole update and its confirmation
 happen in this single process, under an exclusive lock.
 """
 import argparse
+import datetime as _dt
 import fcntl
 import json
 import os
+import re
 import sys
 import tempfile
+
+# A stamp is a claim about WHEN a pass happened, and this script is the only
+# sanctioned way a pass makes that claim into the ledger. Every forward stamp
+# the guard has ever found on this file was authored here, by hand, in a
+# payload -- "22:04:00Z" is a round number, and round numbers are what a pass
+# writes when it is summarising rather than reading a clock.
+#
+# The rule is therefore: refuse a stamp that is later than the moment of the
+# write. Refusing, not clamping. Clamping would substitute a time the pass never
+# witnessed and report the write as clean, which is precisely the optimistic
+# misreport this guard exists to catch -- a repair the pass did not make,
+# attributed to a pass that did.
+#
+# Tolerance covers clock skew and a stamp truncated to the second; anything
+# beyond that is a hand-entered future time, not a rounding artefact.
+FUTURE_TOLERANCE_S = 60.0
+
+# ISO-8601 with a Z or an explicit numeric offset, optionally preceded by a
+# human prefix ("2026-09-30T22:04:00Z (finch:work, scan_number 1053)"). The
+# prefix is why the pattern is searched rather than the whole field parsed: the
+# free text after the stamp is a pass's prose and is not ours to interpret.
+_ISO = re.compile(
+    r"(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2}):(\d{2})"
+    r"(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?")
+
+
+def _stamp_instants(text):
+    """(value, datetime) for every parseable ISO stamp in `text`.
+
+    A trailing-less stamp (no Z, no offset) is interpreted as UTC, which is what
+    this ledger uses throughout; guessing a local zone would be a second,
+    silent interpretation layered on top of the first.
+    """
+    out = []
+    for m in _ISO.finditer(str(text)):
+        d, hh, mm, ss, off = m.groups()
+        try:
+            if off in (None, "Z"):
+                dt = _dt.datetime.strptime(
+                    f"{d} {hh}:{mm}:{ss}", "%Y-%m-%d %H:%M:%S").replace(
+                        tzinfo=_dt.timezone.utc)
+            else:
+                sign = 1 if off[0] == "+" else -1
+                off = off[1:].replace(":", "")
+                delta = _dt.timedelta(hours=int(off[:2]), minutes=int(off[2:]))
+                dt = _dt.datetime.strptime(
+                    f"{d} {hh}:{mm}:{ss}", "%Y-%m-%d %H:%M:%S").replace(
+                    tzinfo=_dt.timezone(sign * delta))
+        except ValueError:
+            continue
+        out.append((m.group(0), dt))
+    return out
+
+
+def _forward_stamps(payload_fields, now):
+    """Fields whose embedded stamp is later than `now`, as (field, value, s)."""
+    bad = []
+    for field, value in payload_fields:
+        for text, dt in _stamp_instants(value):
+            delta = (dt - now).total_seconds()
+            if delta > FUTURE_TOLERANCE_S:
+                bad.append((field, text, delta))
+    return bad
 
 USAGE = """\
 Single-shot writer: append one work_log entry + update signal/notes on a task.
@@ -129,6 +194,29 @@ def main(argv=None):
         payload = json.load(fh)
 
     task_id = payload["id"]
+
+    # Refuse a future stamp BEFORE the lock and before any read-modify-write,
+    # so a rejected payload leaves the ledger byte-identical. The check covers
+    # every field the writer copies onto the task, not just updated_at: a
+    # forward stamp smuggled into signal or work_log launders just as
+    # effectively, because the guard reports per-field and the next pass reads
+    # whichever field it happens to quote.
+    now = _dt.datetime.now(_dt.timezone.utc)
+    checked = [(k, payload[k]) for k in
+               ("updated_at", "last_finch_review", "signal", "notes", "work_log")
+               if k in payload]
+    forward = _forward_stamps(checked, now)
+    if forward:
+        print("ABORT: payload carries stamp(s) later than the moment of the "
+              f"write (now {now.isoformat()}):")
+        for field, text, delta in forward:
+            print(f"  {field}: {text}  (+{delta:.0f}s in the future)")
+        print("  Refusing rather than clamping: a clamped time is one the pass "
+              "never witnessed,\n  and reporting it clean would be the "
+              "optimistic misreport this check exists to prevent.")
+        print("  Pass the real clock reading as updated_at, e.g. "
+              "`date -u +%Y-%m-%dT%H:%M:%SZ`.")
+        return 1
     lock_path = tasklist + ".lock"
     with open(lock_path, "a") as lock_fh:
         fcntl.flock(lock_fh, fcntl.LOCK_EX)
