@@ -40,20 +40,18 @@ def run_writer(tasklist, payload_obj):
         ppath = os.path.join(d, "payload.json")
         with open(ppath, "w") as fh:
             json.dump(payload_obj, fh)
-        # The writer hardcodes TASKLIST, so exercise the real merge logic by
-        # importing it is not possible (it runs on import). Instead run it
-        # against a temp ledger by pointing the module-level constant.
+        # Do NOT rewrite the module source to point it at a temp ledger. This
+        # suite did that by string-matching the module-level TASKLIST
+        # constant, and the moment the writer resolved its path from the
+        # environment instead (commit 3ac6522) the substitution silently
+        # became a no-op: the patched copy read the REAL ledger, found no task
+        # id 't', and every case failed with "ABORT: 0 tasks match" while the
+        # test still reported a substituted file. A source-rewriting test
+        # asserts nothing about the shipped script; the FINCH_TASKLIST
+        # override is the supported seam, so use it.
         env = dict(os.environ)
-        with open(WRITER) as src_fh:
-            src = src_fh.read()
-        patched = src.replace(
-            'TASKLIST = "%s"' % "/root/.hermes/commons/data/ocas-finch/task-list.json",
-            'TASKLIST = "%s"' % tasklist,
-        )
-        wpath = os.path.join(d, "w.py")
-        with open(wpath, "w") as fh:
-            fh.write(patched)
-        proc = subprocess.run([sys.executable, wpath, ppath],
+        env["FINCH_TASKLIST"] = tasklist
+        proc = subprocess.run([sys.executable, WRITER, ppath],
                               capture_output=True, text=True, timeout=60, env=env)
         with open(tasklist) as fh:
             return proc, json.load(fh)
