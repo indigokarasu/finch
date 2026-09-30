@@ -191,14 +191,69 @@ def load_baseline(path=None):
         return None
 
 
+def _retention_h():
+    """How many hours of samples to retain, given the extrapolation guard.
+
+    Kept as a function of MIN_BASELINE_AGE_H so the two can never drift into
+    an arrangement where retention is shorter than the time needed to qualify.
+    """
+    return max(MIN_BASELINE_AGE_H * 4.0, 4.0)
+
+
+def _prune_samples(samples, now=None):
+    """Drop samples older than the retention window. Returns (kept, n_dropped)."""
+    now = time.time() if now is None else now
+    cutoff = now - _retention_h() * 3600.0
+    kept = [s for s in samples if float(s.get("ts", 0)) >= cutoff]
+    return kept, len(samples) - len(kept)
+
+
 def save_baseline(used_mb, pct, path=None):
+    """Append a sample, retaining the older ones rather than replacing them.
+
+    Measured 2026-09-30 (finch:work #1052). The previous version overwrote the
+    single sample, and main() only overwrote it once that sample had already
+    aged past MIN_BASELINE_AGE_H -- i.e. the instant it became usable for
+    extrapolation, it was destroyed and replaced with a 0h-old one. The growth
+    leg, the only clause that distinguishes a full disk from a runaway disk,
+    then read "unknown" for the whole hour that followed. That is why the leg
+    reads NULL on clustered passes and is measurable on passes spaced further
+    apart than the guard: at a 2h cadence it is measurable 11 of 12 runs, at
+    30 min it is measurable 23 of 48. The recorded diagnosis -- "the fix, if one
+    is ever wanted, is cadence not threshold" -- predicted the opposite and is
+    falsified by that count.
+
+    Overwriting is the bug; it is not a conservative choice, because the sample
+    a run needs in order to measure growth is precisely the one it just made
+    unmeasurable. So: append, keep a bounded window, and let main() pick the
+    anchor. A single-sample reader is unaffected, because the newest sample is
+    still last in the list and still carries the same four fields.
+    """
     path = path or _baseline_path()
-    payload = {
+    existing = load_baseline(path)
+    samples = []
+    if isinstance(existing, dict) and isinstance(existing.get("samples"), list):
+        samples = [s for s in existing["samples"] if isinstance(s, dict)]
+    elif isinstance(existing, dict) and "ts" in existing:
+        # A pre-ring file: adopt the single sample rather than discarding it,
+        # so the first run after this change can still measure growth.
+        samples = [existing]
+
+    sample = {
         "used_mb": round(used_mb, 1),
         "pct": round(pct, 1),
         "ts": time.time(),
         "iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    samples.append(sample)
+    samples, _dropped = _prune_samples(samples)
+
+    # Newest sample's fields are promoted to the top level so any existing
+    # reader -- and the human reading the file -- keeps working unchanged.
+    payload = dict(sample)
+    payload["samples"] = samples
+    payload["retention_hours"] = _retention_h()
+
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w") as fh:
@@ -522,17 +577,42 @@ def main():
     used_mb, total_mb, pct = fs_usage()
     base = load_baseline()
 
+    # Choose the anchor to extrapolate from. The newest sample is almost always
+    # too young (that is what a fresh run just wrote), so the anchor is the
+    # OLDEST retained sample that has already aged past the guard -- not
+    # whichever sample happens to be the only one on disk. See save_baseline()
+    # for the measurement that makes this necessary.
+    now = time.time()
+    candidates = []
+    if isinstance(base, dict) and isinstance(base.get("samples"), list):
+        candidates = [s for s in base["samples"] if isinstance(s, dict) and "ts" in s]
+    elif isinstance(base, dict) and "ts" in base:
+        candidates = [base]
+
+    anchor = None
+    for s in sorted(candidates, key=lambda s: float(s["ts"])):
+        if (now - float(s["ts"])) / 3600.0 >= MIN_BASELINE_AGE_H:
+            anchor = s
+            break
+
     growth_mb_24h = None
     age_h = None
     growth_stale = False
-    if base and "ts" in base:
-        dt_h = max((time.time() - base["ts"]) / 3600.0, 0.01)
-        age_h = dt_h
-        if dt_h >= MIN_BASELINE_AGE_H:
-            growth_mb_24h = (used_mb - base["used_mb"]) * (24.0 / dt_h)
-        else:
-            # Too recent to extrapolate from - report unknown, not a bogus rate.
-            growth_stale = True
+    if candidates:
+        newest = max(float(s["ts"]) for s in candidates)
+        age_h = max((now - newest) / 3600.0, 0.01)
+    if anchor is not None:
+        # NOTE: `age_h` deliberately stays the NEWEST sample's age, exactly as
+        # it was before the ring existed. It is a published field that prior
+        # passes compared across runs, and letting it drift to mean "the
+        # anchor's age" would make every cross-pass reading silently wrong --
+        # the same failure as quoting a retired pid. The anchor's own age is
+        # published separately as growth_anchor_age_hours.
+        dt_h = (now - float(anchor["ts"])) / 3600.0
+        growth_mb_24h = (used_mb - anchor["used_mb"]) * (24.0 / dt_h)
+    elif candidates:
+        # Samples exist but none is old enough: report unknown, not a rate.
+        growth_stale = True
 
     leaks, leak_rows = deleted_open_leaks()
     dbs = db_bloat()
@@ -546,19 +626,17 @@ def main():
     else:
         verdict = "gate unmet - no preemptive destructive cleanup"
 
-    # Do not let a run younger than the extrapolation guard overwrite the
-    # baseline. finch:scan and finch:work both run more often than
-    # MIN_BASELINE_AGE_H, so writing on every run pins the baseline at ~0h and
-    # the growth leg of the gate can then never be evaluated at all -- it
-    # reports "unknown" forever. That is a false negative in the safe
-    # direction: the one trigger that catches a real leak is the one that
-    # never fires. Keeping the older sample makes every ~3rd run measurable
-    # instead, and still refreshes once the sample has aged past the guard.
+    # Record this run's sample. The previous rule -- write only when the on-disk
+    # sample had already aged past the guard -- meant the sample was destroyed
+    # at the precise moment it became usable, so every run in the following
+    # hour read "unknown". Saving unconditionally and retaining a window (see
+    # save_baseline()) keeps an anchor available while the newest sample ages.
+    # The guard still governs EXTRAPOLATION: a run under the guard reports no
+    # rate, it does not refuse to record that it ran.
     baseline_written = False
     if not args.no_baseline_write:
-        if base is None or (age_h is not None and age_h >= MIN_BASELINE_AGE_H):
-            save_baseline(used_mb, pct)
-            baseline_written = True
+        save_baseline(used_mb, pct)
+        baseline_written = True
 
     report = {
         "used_mb": round(used_mb, 1),
@@ -567,14 +645,31 @@ def main():
         "pct_trigger": TRIGGER_PCT,
         "pct_met": pct_met,
         "growth_mb_24h": None if growth_mb_24h is None else round(growth_mb_24h, 1),
-        "observed_delta_mb": None if not base else round(used_mb - base.get("used_mb", used_mb), 1),
-        "baseline_used_mb": None if not base else base.get("used_mb"),
+        "observed_delta_mb": (
+            None if not candidates
+            else round(used_mb - max(candidates, key=lambda s: float(s["ts"]))["used_mb"], 1)
+        ),
+        "baseline_used_mb": (
+            None if not candidates
+            else max(candidates, key=lambda s: float(s["ts"]))["used_mb"]
+        ),
         "growth_trigger_mb_24h": TRIGGER_GROWTH_MB_24H,
         "growth_met": growth_met,
         "baseline_age_hours": None if age_h is None else round(age_h, 2),
         "growth_stale": growth_stale,
         "growth_measured": growth_mb_24h is not None,
         "baseline_written": baseline_written,
+        # Which sample the rate came from, and how many are on disk. Published
+        # because with a retention ring `baseline_age_hours` is the ANCHOR's age
+        # while `observed_delta_mb` is against the NEWEST sample; a reader who
+        # assumes they are the same interval will misread the rate.
+        "growth_anchor_age_hours": (
+            None if anchor is None
+            else round((now - float(anchor["ts"])) / 3600.0, 2)
+        ),
+        "growth_anchor_used_mb": None if anchor is None else anchor["used_mb"],
+        "baseline_samples_retained": len(candidates),
+        "baseline_retention_hours": _retention_h(),
         "deleted_open_leaks": leaks,
         "deleted_open_leaks_threshold_fds": 50,
         "deleted_open_total_mb": round(
