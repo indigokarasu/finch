@@ -65,3 +65,18 @@ scripts/finch_tokyo_ada_watch.py
 # it needing a line here, so the failure is silent until the PII gate catches it.
 scripts/*_watch.py
 scripts/test_*_watch*.py
+
+# The growth-watcher's baseline sample. It is a live reading of THIS host's
+# filesystem, written on every qualifying run, and it used to sit next to the
+# script inside the checkout -- so `git add -A` in the auto-sync staged it into
+# this public repo, which it has been since 2026-09-26. Same class as the
+# publish incident described above. `git rm --cached` is the part that actually
+# frees it; this line is what stops the next sync re-adding it, because an
+# ignore rule a tracked file already escaped is decoration. The fix proper is
+# in finch_disk_watch.py: the baseline now resolves to
+# <profile root>/state/disk_watch_baseline.json, so it is keyed by PROFILE and
+# written outside any checkout -- two copies of the watcher on one host share
+# one sample instead of each deciding the growth gate privately. This line is
+# belt-and-braces for the no-profile fallback path, which still writes here.
+scripts/disk_watch_baseline.json
+scripts/disk_watch_baseline.json.tmp

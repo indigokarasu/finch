@@ -104,15 +104,57 @@ def _resolve_profile():
 PROFILE, PROFILE_SOURCE = _resolve_profile()
 
 
-def _db_target(rel):
-    """Resolve a DB path under this host's Hermes profile root.
+def _profile_root():
+    """This host's data dir for the resolved profile, or None if unresolved.
 
-    Generic by construction: the profile name comes from $HERMES_PROFILE or from
-    this script's own location, and the home directory from the environment, so
-    this file carries no host-specific path and works on any machine."""
+    Generic by construction: the profile name comes from _resolve_profile() and
+    the home from the environment, so this file carries no host-specific path.
+
+    `_default_hermes_home()` is used rather than a literal `~/.hermes` because
+    _profile_dir_ok() already honours HERMES_DATA_DIR_SUFFIX -- if the two
+    disagreed, a suffixed install would validate the profile against one tree
+    and then look for its DBs in another, and every DB path would resolve to
+    None and the section would read as "no bloat" (the empty-means-not-measured
+    false negative clause (d) was closed to fix).
+    """
     if not PROFILE:
         return None
-    return os.path.join(HOME_DIR, ".hermes", "profiles", PROFILE, rel)
+    return os.path.join(_default_hermes_home(), "profiles", PROFILE)
+
+
+def _db_target(rel):
+    """Resolve a DB path under this host's Hermes profile root."""
+    root = _profile_root()
+    return None if root is None else os.path.join(root, rel)
+
+
+def _baseline_path():
+    """Where the growth baseline lives: per PROFILE, never per CHECKOUT.
+
+    Measured 2026-09-30 (finch:work #1041). The baseline used to sit next to
+    this file, i.e. inside the checkout, which had two consequences, both real:
+
+    1. A growth RATE is only meaningful against a baseline for the same
+       instrument on the same host. With the baseline in the checkout, the
+       repo copy and the profile-skill copy each held a private sample, so
+       whichever copy a pass happened to run decided what the growth gate
+       said. The rate is a property of the FILESYSTEM; the sample is an
+       input to measuring it and must not vary with which copy is invoked.
+
+    2. The file is git-tracked (it has been committed on every 'chore: sync'
+       since 2026-09-26), so every run dirtied the working tree with a real
+       host measurement. That is the same class as the 2026-09-26/27 publish
+       incident in .gitignore: host state staged by `git add -A` into a public
+       repo. Keying the path by profile puts it beside the profile's own data,
+       outside any checkout, so the class cannot recur from a later pass.
+
+    Falls back to the in-checkout path only when no profile resolves, so a run
+    with no profile information still measures something rather than crashing.
+    """
+    root = _profile_root()
+    if root is None:
+        return os.path.join(os.path.dirname(__file__), "disk_watch_baseline.json")
+    return os.path.join(root, "state", "disk_watch_baseline.json")
 
 
 DB_TARGETS = [
@@ -136,7 +178,7 @@ def fs_usage():
 
 def load_baseline(path=None):
     """Read the previous sample so growth/24h can be computed."""
-    path = path or os.path.join(os.path.dirname(__file__), "disk_watch_baseline.json")
+    path = path or _baseline_path()
     try:
         with open(path) as fh:
             return json.load(fh)
@@ -145,13 +187,14 @@ def load_baseline(path=None):
 
 
 def save_baseline(used_mb, pct, path=None):
-    path = path or os.path.join(os.path.dirname(__file__), "disk_watch_baseline.json")
+    path = path or _baseline_path()
     payload = {
         "used_mb": round(used_mb, 1),
         "pct": round(pct, 1),
         "ts": time.time(),
         "iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w") as fh:
         json.dump(payload, fh, indent=2)
