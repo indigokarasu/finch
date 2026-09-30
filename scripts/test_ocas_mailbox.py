@@ -31,12 +31,25 @@ def check(name, got, want):
         print("  FAIL %-52s got %r want %r" % (name, got, want))
 
 
+_CRED_DIRS = set()
+
+
 def with_cred_dir(fn):
+    """Run `fn` against a temp credential dir this suite made, then remove it.
+
+    The path goes through the same confinement check as the other suites here:
+    a test that deletes real state is worse than a test that fails. See
+    test_finch_ledger_guard.py::rmtree_confined for the invariant — a path is
+    deletable only if this process created it.
+    """
     d = Path(tempfile.mkdtemp())
+    real = os.path.realpath(d)
+    _CRED_DIRS.add(real)
     try:
         return fn(d)
     finally:
-        shutil.rmtree(d, ignore_errors=True)
+        assert real in _CRED_DIRS, "fixture dir vanished from the registry"
+        shutil.rmtree(real, ignore_errors=True)
 
 
 def clear_env():
