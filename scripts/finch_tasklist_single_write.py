@@ -142,11 +142,34 @@ def main(argv=None):
 
         t = matches[0]
         before_status = t.get("status")
-        before_log = len(t.get("work_log") or [])
+
+        # A work_log that is a bare STRING cannot be prepended to, and
+        # `[new] + "old"` raises TypeError. One task on this ledger carries
+        # exactly that shape, written by finch:work #214 on 2026-09-27. The
+        # effect is that the ONLY sanctioned writer cannot write that task at
+        # all: the pass does its whole analysis, passes the pre-write ledger
+        # guard (which does not inspect this shape), and then dies on the last
+        # step, after the work, with the finding unrecorded.
+        #
+        # Normalise the shape here rather than refusing: the content is
+        # preserved verbatim as a single-element list, so the record is
+        # repaired in form and untouched in substance. Refusing would only
+        # convert a data defect into a permanent inability to log.
+        prior_log = t.get("work_log")
+        normalised_prior = False
+        if isinstance(prior_log, str):
+            prior_log = [prior_log]
+            normalised_prior = True
+        elif prior_log is not None and not isinstance(prior_log, list):
+            raise SystemExit(
+                f"ABORT: task {task_id!r} has work_log of type "
+                f"{type(prior_log).__name__}; refusing to guess its shape"
+            )
+        before_log = len(prior_log or [])
 
         t["signal"] = payload["signal"]
         t["notes"] = payload["notes"]
-        t["work_log"] = [payload["work_log"]] + (t.get("work_log") or [])
+        t["work_log"] = [payload["work_log"]] + (prior_log or [])
         t["last_finch_review"] = payload["last_finch_review"]
         t["updated_at"] = payload["updated_at"]
         for k, v in payload.get("set", {}).items():
@@ -187,6 +210,9 @@ def main(argv=None):
     print(f"  id={task_id} status {before_status} -> {ft.get('status')} (unchanged)"
           if before_status == ft.get("status") else f"  id={task_id} status {before_status} -> {ft.get('status')}")
     print(f"  work_log {before_log} -> {len(ft.get('work_log') or [])}")
+    if normalised_prior:
+        print("  note: prior work_log was a bare string; normalised to a 1-element list")
+        print("        (content preserved verbatim, shape repaired)")
     print(f"  bytes={os.path.getsize(tasklist)}  total_tasks={len(ftasks)}")
     for k in checks:
         print(("  ok   " if checks[k] else "  FAIL ") + k)
