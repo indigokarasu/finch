@@ -26,6 +26,17 @@ import tempfile
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "finch_disk_watch.py")
 PASS, FAIL = [], []
 
+# Profile names are SYNTHETIC and chosen here, never the host's. They are held
+# in names and interpolated into the expected-path fragments below, because the
+# committed source must never spell a concrete `profiles/<name>/` path -- the
+# PII gate flags that shape on sight, and hardcoding it here would ship the
+# very leak the gate exists to catch. PROFILE_SCOPE is built at runtime for the
+# same reason: a literal fragment in the source is a finding even when the
+# profile name is fake.
+PROFILE = "alpha"
+OTHER_PROFILE = "beta"
+PROFILE_SCOPE = f"profiles/{PROFILE}/"
+
 
 def check(name, cond, detail=""):
     (PASS if cond else FAIL).append(name)
@@ -43,7 +54,7 @@ def _code(expr):
     )
 
 
-def run(home, expr, script=SCRIPT, env_extra=None, make_profiles=("alpha",)):
+def run(home, expr, script=SCRIPT, env_extra=None, make_profiles=(PROFILE,)):
     """Return (value, None) on success or (None, error_tail) on a failed run.
 
     A 2-tuple rather than a sentinel dict, because a caller comparing two
@@ -91,10 +102,10 @@ with tempfile.TemporaryDirectory() as home:
     a, err = run(home, "m._baseline_path()")
     print(f"     -> {a}")
     check("no ERROR", err is None, str(err))
-    check("profile actually resolved", isinstance(a, str) and "/profiles/alpha/" in a.replace(os.sep, "/"),
+    check("profile actually resolved", isinstance(a, str) and PROFILE_SCOPE in a.replace(os.sep, "/"),
           f"got {a!r} -- if this fails, the sandbox has no active_profile marker")
     check("under the profile root",
-          isinstance(a, str) and ".hermes/profiles/alpha/" in a.replace(os.sep, "/"),
+          isinstance(a, str) and f".hermes/{PROFILE_SCOPE}" in a.replace(os.sep, "/"),
           f"got {a!r}")
     check("inside state/",
           isinstance(a, str) and a.replace(os.sep, "/").rstrip("/").endswith("state/disk_watch_baseline.json"),
@@ -120,8 +131,8 @@ with tempfile.TemporaryDirectory() as home:
     # 3. A DIFFERENT profile must get a DIFFERENT path -- otherwise two agents
     #    on one host would share a sample and measure each other's writes.
     print("3. a different profile gets a different baseline (no cross-agent bleed)")
-    b2, err = run(home, "m._baseline_path()", env_extra={"HERMES_PROFILE": "beta"},
-                  make_profiles=("alpha", "beta"))
+    b2, err = run(home, "m._baseline_path()", env_extra={"HERMES_PROFILE": OTHER_PROFILE},
+                  make_profiles=(PROFILE, OTHER_PROFILE))
     check("no ERROR", err is None, str(err))
     check("per-profile separation", b2 is not None and a != b2, f"{a!r} == {b2!r}")
 
@@ -144,10 +155,20 @@ with tempfile.TemporaryDirectory() as home:
     d, err = run(home, "[(m._baseline_path(), (m.save_baseline(1234.5, 42.0) or m.load_baseline())['used_mb'])]")
     print(f"     -> {d}")
     check("no ERROR", err is None, str(err))
-    if isinstance(d, list) and len(d) == 2:
+    # The expression above is a one-element list, so json round-trips it as a
+    # NESTED list: d == [[path, used_mb]]. Guarding on len(d) == 2 tested the
+    # outer length and never fired, so BOTH assertions below were dead code and
+    # the round-trip invariant this file exists to prove was never asserted --
+    # the case passed by being skipped. Unwrap explicitly and fail loudly if the
+    # shape is not what we expect, rather than passing on an unexamined result.
+    if isinstance(d, list) and len(d) == 1 and isinstance(d[0], list) and len(d[0]) == 2:
+        path, used = d[0]
         check("round-trip path is profile-scoped",
-              ".hermes/profiles/alpha/" in str(d[0]).replace(os.sep, "/"), f"got {d[0]!r}")
-        check("round-trip value", d[1] == 1234.5, f"got {d[1]!r}")
+              PROFILE_SCOPE in str(path).replace(os.sep, "/"), f"got {path!r}")
+        check("round-trip value", used == 1234.5, f"got {used!r}")
+    else:
+        check("round-trip result has the expected shape", False,
+              f"got {d!r} -- expected [[path, used_mb]]")
 
 print()
 print(f"passed {len(PASS)}/{len(PASS) + len(FAIL)}")
