@@ -35,6 +35,10 @@ TRIGGER_GROWTH_MB_24H = 5 * 1024  # 5 GB
 MIN_BASELINE_AGE_H = 1.0
 
 HOME_DIR = os.path.expanduser("~")
+# Roots the weight walk covers. A constant, not an inline tuple, so a test can
+# point the walk at a temp tree instead of inheriting whatever /opt happens to
+# hold -- a fixture that reads the real host asserts nothing about the code.
+RECLAIM_ROOTS = (HOME_DIR, "/opt", "/usr/local", "/usr/share")
 PROFILE = os.environ.get("HERMES_PROFILE", "").strip()
 # The platform's default data dir carries an optional suffix, so the default
 # home is not always literally ~/.hermes. Mirrors hermes_constants'
@@ -242,7 +246,7 @@ def _reclaim_candidates(in_use):
     """
     seen_inodes = {}
     out = []
-    for base in (HOME_DIR, "/opt", "/usr/local", "/usr/share"):
+    for base in RECLAIM_ROOTS:
         for dirpath, _dirnames, filenames in os.walk(base):
             # A blob store's own names are the OTHER links; keep them out of the
             # walk so the reported candidate is the copy a service can drop.
@@ -270,14 +274,22 @@ def _reclaim_candidates(in_use):
         # hardlink rule alone calls it free. Subtract live use, not rename it.
         live = p in in_use
         reclaimable = hardlink_unique and not live
+        size_mb = round(size / 1048576, 1)
+        # Two DIFFERENT reasons a weight is not reclaimable, and they must not
+        # be summed under one name: a hardlinked file is double-counted by du
+        # (a real du artifact), while an in-use file is simply alive (a liveness
+        # gap). The old total added them, so a field named for the du artifact
+        # moved when a service merely started reading a weight.
+        hardlink_overreport_mb = 0.0 if hardlink_unique else size_mb
         out.append({
             "path": p,
-            "size_mb": round(size / 1048576, 1),
+            "size_mb": size_mb,
             "nlink": nlink,
             "other_links": links - 1,
-            "du_would_report_mb": round(size / 1048576, 1),
+            "du_would_report_mb": size_mb,
             "in_use_by_running_process": live,
-            "truly_reclaimable_mb": round(size / 1048576, 1) if reclaimable else 0.0,
+            "hardlink_overreport_mb": hardlink_overreport_mb,
+            "truly_reclaimable_mb": size_mb if reclaimable else 0.0,
         })
     out.sort(key=lambda r: -r["size_mb"])
     return out[:12]
@@ -578,7 +590,10 @@ def main():
             sum(r["size_mb"] for r in reclaim if r["in_use_by_running_process"]), 1
         ),
         "reclaim_du_overreport_mb": round(
-            sum(r["du_would_report_mb"] - r["truly_reclaimable_mb"] for r in reclaim), 1
+            sum(r["hardlink_overreport_mb"] for r in reclaim), 1
+        ),
+        "reclaim_not_reclaimable_mb": round(
+            sum(r["size_mb"] for r in reclaim if not r["truly_reclaimable_mb"]), 1
         ),
         "db_bloat": dbs,
         "db_bloat_measured": bool(dbs) or PROFILE_SOURCE != "unresolved",
