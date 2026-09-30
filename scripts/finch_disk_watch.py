@@ -290,23 +290,62 @@ def in_use_paths():
     path is an argument of a live service, so a weight the running daemon reads
     on every request is reported as free. Deleting it does not fail loudly -- it
     works until the next inference, which is the worst shape a reclaim bug can
-    have. Two independent sources, because either alone is incomplete: argv
-    catches the ``-m /path/model.gguf`` case, open FDs catch the case where a
-    service inherited the fd from a parent or loaded the file then kept it.
+    have. Three independent sources, because any one alone is incomplete:
+
+      * argv  catches the ``-m /path/model.gguf`` case;
+      * open FDs catch a service that inherited the fd from a parent, or loaded
+        the file and kept the descriptor;
+      * memory MAPS catch the case neither of the other two sees, measured
+        2026-09-30: a file that is mmapped but named by no argv token and held
+        by no open fd is invisible to both. Every mmap'd region names its
+        backing file in field 6 of /proc/<pid>/maps, and a loader that opens a
+        weight, maps it, and closes the descriptor (the normal way to read a
+        multi-GB model without pinning an fd) leaves NO other trace. That is a
+        live file reported as free, which is the one answer this section must
+        never give.
+
     A path can also be in use while being genuinely reclaimable later, so this is
     reported as a set for the caller to subtract, never as a deletion decision.
     General rule (walk /proc), not a host value.
     """
     out = set()
     for piddir in glob.glob("/proc/[0-9]*"):
-        pid = os.path.basename(piddir)
+        # Each source is independent, so each is read in its own try. A single
+        # `except OSError: continue` on the cmdline read used to abandon the
+        # fd and maps walks for that pid: an unreadable argv (a process
+        # vanished mid-walk, a hidepid mount, a kernel thread) silently
+        # discarded two sources that might still have been readable. The
+        # measurement was then "this file is free" when the truth was "I
+        # stopped looking", which is the false negative in the dangerous
+        # direction this function exists to prevent.
         try:
             with open(os.path.join(piddir, "cmdline"), "rb") as fh:
                 for tok in fh.read().split(b"\0"):
-                    if tok.startswith(b"/") and os.path.sep.encode() in tok[1:]:
+                    if tok.startswith(b"/") and os.sep.encode() in tok[1:]:
                         out.add(os.fsdecode(tok.rstrip(b"/")))
         except OSError:
-            continue
+            pass
+        try:
+            with open(os.path.join(piddir, "maps")) as fh:
+                for line in fh:
+                    parts = line.split(maxsplit=5)
+                    if len(parts) < 6:
+                        continue
+                    # Field 6 is the backing file, and it CARRIES THE LINE'S OWN
+                    # TRAILING NEWLINE -- a real /proc/<pid>/maps line ends
+                    # "/path/weight.gguf\n". Kept verbatim, the path never
+                    # equals any candidate on disk, so every mapped file reads
+                    # as unmapped while looking correct in the source.
+                    backing = parts[5][:-1] if parts[5].endswith("\n") else parts[5]
+                    # A mapped region whose file was unlinked reads
+                    # "<path> (deleted)"; the path can no longer be a reclaim
+                    # candidate, but it is still a file the kernel is using.
+                    if backing.endswith(" (deleted)"):
+                        backing = backing[: -len(" (deleted)")]
+                    if backing.startswith("/"):
+                        out.add(backing)
+        except OSError:
+            pass
         fddir = os.path.join(piddir, "fd")
         try:
             fds = os.listdir(fddir)
