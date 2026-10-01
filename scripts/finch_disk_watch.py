@@ -223,10 +223,36 @@ def _window_steps(samples):
     ]
 
 
-def _pick_anchor(candidates, now):
+def _pick_anchor(candidates, now, current_mb=None):
     """Choose the sample to extrapolate growth from, and report what it rests on.
 
     Returns (anchor, trend_note, step_mb, spans_step).
+
+    `current_mb` is the reading this run is about to publish. Passing it is what
+    makes the honesty label describe the rate that is actually published:
+    main() computes growth_mb_24h from [anchor.ts, now], so the step analysis and
+    the window endpoints named in the note must cover [anchor.ts, now] too.
+
+    Measured 2026-10-01 (finch:work #1086). The analysis used to run over the
+    ring ALONE -- [oldest ring sample, newest ring sample] -- while the published
+    rate ran [oldest ring sample, now]. The gap is the interval between the last
+    saved sample and this reading, and it was never examined by the dominance
+    test. On this host that unmeasured tail carried the only DECREASE in the
+    whole window (-158.0 MB) and the tail was growing with cadence, because a
+    ~30min job on a 4h retention window skips samples between runs.
+
+    The consequence is a label that certifies a different number than the one
+    published: growth_trend_note reported "endpoints 18:21:21Z..22:03:05Z
+    (3.70h, +880.6 MB)", which normalises to +5,712.4 MB/24h -- MET against the
+    5,120 trigger -- while growth_mb_24h published +4,245.4, UNMET. The
+    headline and its own justification disagreed about whether the gate had
+    fired, and growth_window_spans_step=false (the field this task's trigger
+    tells every pass to trust for sign honesty) was computed without the tail.
+
+    An omitted segment is not a small gap here: the tail is where a rate's
+    numerator is decided, so "no step in this window" could be true of a window
+    that stopped short of the measurement. Pass current_mb and the analysis and
+    the rate share one window by construction.
 
     Measured 2026-10-01 (finch:work #1082). The previous rule took the OLDEST
     retained sample that had aged past MIN_BASELINE_AGE_H, on the reasoning that
@@ -261,6 +287,15 @@ def _pick_anchor(candidates, now):
     )
     if not samples:
         return None, "no samples retained", 0.0, False
+
+    # Extend the analysis window to THIS run's reading. Without this the rate
+    # below is published over [anchor.ts, now] while the step test and the
+    # endpoints quoted in the note describe only [anchor.ts, newest ring ts] --
+    # i.e. the label certifies a rate that was never reported. Appending keeps
+    # the anchor correct: samples[0] is still the oldest REAL sample, so this
+    # can neither become the anchor nor shorten the window.
+    if current_mb is not None:
+        samples = samples + [{"ts": now, "used_mb": float(current_mb)}]
 
     newest = samples[-1]
     oldest = samples[0]
@@ -297,12 +332,20 @@ def _pick_anchor(candidates, now):
             "growth not measured: retention window has zero duration" + step_note
         ), biggest, spans_step
 
+    # The note must restate the window the RATE uses, or it certifies a
+    # different number than the one published: growth_mb_24h divides
+    # (used_mb - anchor) by (now - anchor.ts), so the honest span is the one
+    # ending at `now`. Quote the normalised rate explicitly so a reader can
+    # check the headline against the label that justifies it -- they disagreed
+    # by 1,467 MB/24h on this host before this was measured (finch:work #1086).
+    normalised = span_mb * (24.0 / dt_h)
     return oldest, (
-        "anchored on window endpoints %s..%s (%.2fh, %+.1f MB, %d samples); "
+        "anchored on window endpoints %s..%s (%.2fh, %+.1f MB, %d samples, "
+        "rate %+.1f MB/24h over the same endpoints as growth_mb_24h); "
         "interior samples cannot bias this rate%s" % (
             time.strftime("%H:%M:%SZ", time.gmtime(float(oldest["ts"]))),
             time.strftime("%H:%M:%SZ", time.gmtime(float(newest["ts"]))),
-            dt_h, span_mb, len(samples), step_note)
+            dt_h, span_mb, len(samples), normalised, step_note)
     ), biggest, spans_step
 
 
@@ -687,7 +730,10 @@ def main():
     elif isinstance(base, dict) and "ts" in base:
         candidates = [base]
 
-    anchor, trend_note, step_mb, spans_step = _pick_anchor(candidates, now)
+    # current_mb is passed so the step test and the endpoints quoted in
+    # growth_trend_note describe the SAME window growth_mb_24h is computed over
+    # -- [anchor.ts, now] -- rather than stopping at the last saved sample.
+    anchor, trend_note, step_mb, spans_step = _pick_anchor(candidates, now, used_mb)
 
     growth_mb_24h = None
     age_h = None
