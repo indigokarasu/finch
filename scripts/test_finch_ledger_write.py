@@ -583,6 +583,155 @@ def main():
           len(W.find_stale_review_claims(doc8)) == 1,
           str(W.find_stale_review_claims(doc8)))
 
+    print("\n27. the DEBT KEY is the task id, so a reorder cannot mint new damage")
+    # Measured live 2026-10-01 against the real ledger: the trail was a list
+    # INDEX, and finch_scan_tasklist_rerank.py -- a sanctioned writer -- sorts
+    # the array on every invocation. Dropping one record at index 0 re-keyed
+    # all 11 pre-existing contradictions as NEW and the writer refused a write
+    # that authored none of the debt; the sort alone re-keyed 2. This is the
+    # same laundering path test 25 pins for rewording, reached through
+    # POSITION rather than prose -- and a sort is a normal, correct thing for
+    # a re-ranker to do, so no amount of care at the caller prevents it.
+    d9 = base_doc()
+    d9["tasks"][0]["last_finch_review"] = "2026-01-01T00:00:00Z"
+    d9["tasks"][0]["work_log"] = ["2026-01-01T16:00:00Z (finch:scan #9): EXECUTED."]
+    h_before = W.find_stale_review_claims(d9)
+    check("debt keyed on the id, not tasks[0]",
+          h_before and h_before[0][0] == "task alpha", "trail=%r" % h_before[0][0] if h_before else "no hit")
+    # The decisive direction: reorder the SAME records and the key must not move.
+    reordered = {"tasks": list(reversed(d9["tasks"]))}
+    h_after = W.find_stale_review_claims(reordered)
+    check("a reorder does not re-key the debt",
+          h_after and h_after[0][0] == "task alpha", "trail=%r" % h_after[0][0] if h_after else "no hit")
+    # And the end-to-end consequence: the reordered doc must not be refused.
+    with open(led, "w") as fh:
+        json.dump(d9, fh, indent=2)
+    staged9 = os.path.join(tmp, "reordered.json")
+    with open(staged9, "w") as fh:
+        json.dump(reordered, fh)
+    rc, out = cli(["--doc", staged9], led, jd)
+    check("reordering PRE-EXISTING debt is not a refusal", rc == 0,
+          "exit=%d\n%s" % (rc, out[-400:]))
+
+    print("\n28. a --doc that DROPS a record is REFUSED (exit 6)")
+    # The 2026-09-30 #1058 loss: a pass rebuilt the file from a partial read
+    # and wrote 17 destroyed task records out with 'VERDICT: WRITTEN CLEAN'.
+    # A --doc is a full replacement, so anything it omits is gone -- and a
+    # destroyed record leaves no forward stamp and no contradiction behind for
+    # any detector to find afterwards. Silence is the whole failure.
+    with open(led, "w") as fh:
+        json.dump(base_doc(), fh, indent=2)
+    victim = copy.deepcopy(base_doc())
+    victim["tasks"] = victim["tasks"][:1]          # 'beta' is gone
+    stagedA = os.path.join(tmp, "lost_beta.json")
+    with open(stagedA, "w") as fh:
+        json.dump(victim, fh)
+    before = open(led).read()
+    rc, out = cli(["--doc", stagedA], led, jd)
+    check("refused with exit 6", rc == 6, "exit=%d\n%s" % (rc, out[-400:]))
+    check("the refusal names the record", "beta" in out, out[-400:])
+    check("nothing was written", open(led).read() == before, "the ledger moved")
+    check("both records survive on disk", len(json.load(open(led))["tasks"]) == 2,
+          str(len(json.load(open(led))["tasks"])))
+
+    print("\n29. a --doc that DROPS a scan_note is REFUSED, and a REWORDED one is not")
+    # scan_notes are strings led by their own pass claim, so (#N) is the
+    # identity: a vanished note is a loss, a reworded one is the same note.
+    # The shape is the live one -- all 6 notes on the real ledger are strings
+    # of this form, measured 2026-10-01.
+    docN = base_doc()
+    docN["scan_notes"] = [
+        "2026-10-01T04:22:13Z (#1063): 5 of 6 sources; sessions ABSENT.",
+        "2026-10-01T05:17:19Z (#1064): 5 of 6 sources; sessions ABSENT.",
+        "2026-10-01T07:18:22Z (#1065): 5 of 6 sources; sessions ABSENT.",
+    ]
+    with open(led, "w") as fh:
+        json.dump(docN, fh, indent=2)
+    kept = copy.deepcopy(docN)
+    kept["scan_notes"] = kept["scan_notes"][:1]    # notes 1065 and 1064 gone
+    stagedB = os.path.join(tmp, "lost_notes.json")
+    with open(stagedB, "w") as fh:
+        json.dump(kept, fh)
+    rc, out = cli(["--doc", stagedB], led, jd)
+    check("a dropped scan_note is refused", rc == 6, "exit=%d\n%s" % (rc, out[-400:]))
+    check("the refusal names the pass number", "1065" in out, out[-400:])
+
+    reworded = copy.deepcopy(docN)
+    reworded["scan_notes"][-1] = ("2026-10-01T07:18:22Z (#1065): REWORDED prose,"
+                                 " same pass, same identity.")
+    stagedC = os.path.join(tmp, "reworded_note.json")
+    with open(stagedC, "w") as fh:
+        json.dump(reworded, fh)
+    rc, out = cli(["--doc", stagedC], led, jd)
+    check("a REWORDED scan_note is the same note, not a loss", rc == 0,
+          "exit=%d\n%s" % (rc, out[-400:]))
+
+    print("\n30. the count is NOT the control: a drop-one-add-one swap is caught")
+    # 203 live tasks, one dropped and one synthetic added. The count is
+    # unchanged, so any count-based shrink predicate reads this as a legal
+    # write while a finished task record has been destroyed.
+    with open(led, "w") as fh:
+        json.dump(base_doc(), fh, indent=2)
+    swapped = copy.deepcopy(base_doc())
+    swapped["tasks"] = [swapped["tasks"][0]]       # beta out
+    swapped["tasks"].append({"id": "synthetic", "status": "open",
+                             "created_at": "2026-01-01T00:00:00Z",
+                             "updated_at": "2026-01-01T00:00:00Z",
+                             "last_finch_review": "2026-01-01T00:00:00Z"})
+    check("the counts are EQUAL, so a count predicate is blind",
+          len(swapped["tasks"]) == len(base_doc()["tasks"]),
+          "%d vs %d" % (len(swapped["tasks"]), len(base_doc()["tasks"])))
+    stagedD = os.path.join(tmp, "swap.json")
+    with open(stagedD, "w") as fh:
+        json.dump(swapped, fh)
+    rc, out = cli(["--doc", stagedD], led, jd)
+    check("the swap is refused anyway", rc == 6, "exit=%d\n%s" % (rc, out[-400:]))
+    check("and the destroyed record is named", "beta" in out, out[-400:])
+
+    print("\n31. --clamp-only and --set are NOT refused by the record-loss control")
+    # A --set cannot reach the task array (`--set tasks` is refused outright),
+    # so it cannot lose a record. Refusing it here would brick the only write
+    # paths that carry no loss risk, on the way to fixing a --doc defect.
+    with open(led, "w") as fh:
+        json.dump(base_doc(), fh, indent=2)
+    rc, out = cli(["--clamp-only"], led, jd)
+    check("clamp-only still writes", rc == 0, "exit=%d\n%s" % (rc, out[-300:]))
+    rc, out = cli(["--set", "scan_cycle=9"], led, jd)
+    check("--set on the header still writes", rc == 0, "exit=%d\n%s" % (rc, out[-300:]))
+    rc, out = cli(["--task", "beta", "--set", "updated_at=2026-01-02T00:00:00Z"], led, jd)
+    check("--task --set still writes", rc == 0, "exit=%d\n%s" % (rc, out[-300:]))
+    # A --doc that GROWS the record set is also fine: --merge is the shape
+    # that legitimately adds tasks, and a shrink guard must not block it.
+    grew = copy.deepcopy(base_doc())
+    grew["tasks"].append({"id": "gamma", "status": "open",
+                          "created_at": "2026-01-01T00:00:00Z",
+                          "updated_at": "2026-01-01T00:00:00Z",
+                          "last_finch_review": "2026-01-01T00:00:00Z"})
+    stagedE = os.path.join(tmp, "grew.json")
+    with open(stagedE, "w") as fh:
+        json.dump(grew, fh)
+    rc, out = cli(["--doc", stagedE], led, jd)
+    check("a --doc that ADDS a record is allowed (the --merge shape)", rc == 0,
+          "exit=%d\n%s" % (rc, out[-400:]))
+
+    print("\n32. the shrink guard runs BEFORE the write and is not bypassable by --clamp-only")
+    # Test 17/20 exist for the exit-4 and exit-5 controls for exactly this
+    # reason: --clamp-only rewrites the file around a staged document, so if
+    # the loss check were placed after the merge it would see a document that
+    # no longer contains the staged gap and wave it through.
+    with open(led, "w") as fh:
+        json.dump(base_doc(), fh, indent=2)
+    hidden = copy.deepcopy(base_doc())
+    hidden["tasks"] = hidden["tasks"][:1]
+    stagedF = os.path.join(tmp, "hidden.json")
+    with open(stagedF, "w") as fh:
+        json.dump(hidden, fh)
+    rc, out = cli(["--doc", stagedF, "--clamp-only"], led, jd)
+    check("--clamp-only cannot carry a record loss in", rc == 6, "exit=%d" % rc)
+    check("the lost record did not land",
+          len(json.load(open(led))["tasks"]) == 2,
+          str(len(json.load(open(led))["tasks"])))
+
     print("\n%s" % ("-" * 60))
     if FAILURES:
         print("FAILED: %d check(s): %s" % (len(FAILURES), ", ".join(FAILURES)))
