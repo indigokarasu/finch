@@ -28,8 +28,9 @@ RULES THESE TESTS HONOUR
     in the past forever, so a forward-stamp case written against one passes
     vacuously and reads as coverage (this exact mistake is recorded in
     finch:work #204's log, where cases 17-19 passed against a 2020 fixture);
-  - the CLAMP case is proven NON-VACUOUS by running the pre-fix writer from git
-    on the same poisoned bytes and asserting it carried the stamp through. A
+  - the CLAMP case is proven NON-VACUOUS by running the pre-fix writer (a
+    checked-in fixture, asserted to lack the clamp) on the same poisoned bytes
+    and asserting it carried the stamp through. A
     test that cannot fail is worse than no test.
 """
 import datetime as _dt
@@ -160,18 +161,22 @@ class RerankWriter(unittest.TestCase):
         self.assertIn("VERDICT: WRITTEN CLEAN", r.stdout)
 
     def test_clamp_is_non_vacuous_pre_fix_writer_carries_it_through(self):
-        """Run the PRE-FIX writer from git on the same bytes and see it fail.
+        """Run the PRE-FIX writer on the same bytes and see it fail.
 
-        Without this, "clamped: 4" could be a constant. The pre-fix writer is
-        taken from git HEAD~ so the test needs no checked-in fixture and cannot
-        drift from the code it is comparing against.
+        Without this, "clamped: 4" could be a constant. The pre-fix writer is a
+        checked-in fixture rather than read from git: CI checks out depth 1, so
+        HEAD~1 does not exist on the runner and `git show` there exits 128. The
+        fixture is pinned to the pre-fix blob and the first assertion proves it
+        really is pre-fix, so it cannot drift into testing the fixed code --
+        which is exactly how this test was vacuous for one commit: it read
+        HEAD: and ran the FIXED writer against the poisoned bytes.
         """
-        prefix = subprocess.run(
-            ["git", "-C", str(REPO), "show", "HEAD~1:scripts/finch_scan_tasklist_rerank.py"],
-            capture_output=True, text=True, timeout=60)
-        self.assertEqual(prefix.returncode, 0, prefix.stderr)
+        old_src = (REPO / "tests" / "fixtures" / "pre_fix_rerank_writer.py").read_text()
+        self.assertNotIn("load_clamp", old_src,
+                         "fixture has drifted: it contains the clamp, so this "
+                         "test would prove nothing")
         old = self.td / "prefix_writer.py"
-        old.write_text(prefix.stdout)
+        old.write_text(old_src)
         dirty = self.td / "dirty.json"
         shutil.copy(self.led, dirty)
         _plant(dirty, _plus(90))
