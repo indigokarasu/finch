@@ -167,7 +167,7 @@ class RerankWriter(unittest.TestCase):
         drift from the code it is comparing against.
         """
         prefix = subprocess.run(
-            ["git", "-C", str(REPO), "show", "HEAD:scripts/finch_scan_tasklist_rerank.py"],
+            ["git", "-C", str(REPO), "show", "HEAD~1:scripts/finch_scan_tasklist_rerank.py"],
             capture_output=True, text=True, timeout=60)
         self.assertEqual(prefix.returncode, 0, prefix.stderr)
         old = self.td / "prefix_writer.py"
