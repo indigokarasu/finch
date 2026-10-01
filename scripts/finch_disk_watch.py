@@ -208,6 +208,104 @@ def _prune_samples(samples, now=None):
     return kept, len(samples) - len(kept)
 
 
+def _window_steps(samples):
+    """Adjacent-sample deltas of the retained window, oldest first.
+
+    Exposed so the caller can PUBLISH what the rate is sitting on. A rate is a
+    statement about two points; when one adjacent jump dominates every other
+    movement in the window, the sign of that rate depends on which endpoint
+    happens to be the anchor, and a reader is entitled to know that before
+    acting on the number.
+    """
+    return [
+        float(b["used_mb"]) - float(a["used_mb"])
+        for a, b in zip(samples, samples[1:])
+    ]
+
+
+def _pick_anchor(candidates, now):
+    """Choose the sample to extrapolate growth from, and report what it rests on.
+
+    Returns (anchor, trend_note, step_mb, spans_step).
+
+    Measured 2026-10-01 (finch:work #1082). The previous rule took the OLDEST
+    retained sample that had aged past MIN_BASELINE_AGE_H, on the reasoning that
+    the oldest sample is the most smoothed. It is not: the oldest sample is the
+    one most likely to sit on the far side of a one-off step-change, and a rate
+    is measured from ONE endpoint, so a single interior transient becomes the
+    origin of every rate for the rest of the retention period.
+
+    The failure is invisible in `growth_measured`, which only asserts that an
+    anchor existed. On this host the retained window held a 2,316 MB drop in 21
+    seconds at 16:22Z; anchoring across it reported -7,596 MB/24h on a disk that
+    had since risen +1,063 MB monotonically over 3.8h with zero decreases. The
+    reported sign was the opposite of the truth, which is the one error a
+    "which way is it going" gate cannot survive. The same rule has produced
+    +13,665 (an 11.9h-normalisation artifact, retracted at #1028), -1,906, -9,243,
+    -9,037, -6,239 and -7,596 against a flat-to-rising disk.
+
+    So: anchor on the window ENDPOINTS, which makes an interior transient cancel
+    instead of bias. The age guard is unchanged -- a run whose oldest retained
+    sample is under MIN_BASELINE_AGE_H still reports no rate rather than a
+    guessed one, and the rate itself is still the newest-minus-anchor span.
+
+    A dominant step is PUBLISHED, not used to suppress the number. Suppressing
+    it would reproduce #1052's bug, where the leg reads "unknown" for a whole
+    hour; and a rate whose window contains a 2.3 GB step is still better than
+    no rate when it is labelled, because the label tells the reader the
+    direction is endpoint-dependent.
+    """
+    samples = sorted(
+        (s for s in candidates if isinstance(s, dict) and "ts" in s),
+        key=lambda s: float(s["ts"]),
+    )
+    if not samples:
+        return None, "no samples retained", 0.0, False
+
+    newest = samples[-1]
+    oldest = samples[0]
+    dt_h = (float(newest["ts"]) - float(oldest["ts"])) / 3600.0
+    span_mb = float(newest["used_mb"]) - float(oldest["used_mb"])
+    steps = _window_steps(samples)
+    biggest = max((abs(s) for s in steps), default=0.0)
+    rest = sum(abs(s) for s in steps) - biggest
+
+    # Scale-free and constant-free: one interval dominates when that single jump
+    # outweighs every other movement in the window combined. No host value, so
+    # the test cannot be tuned to one machine's traffic.
+    spans_step = bool(steps) and biggest > 0 and biggest > rest
+    step_note = ""
+    if spans_step:
+        biggest_signed = max(steps, key=abs)
+        step_note = (
+            "; window contains a %+.0f MB step between adjacent samples that "
+            "outweighs all other movement combined, so this rate's SIGN depends "
+            "on the endpoints -- read the ring before acting on the direction"
+            % biggest_signed
+        )
+
+    if (now - float(oldest["ts"])) / 3600.0 < MIN_BASELINE_AGE_H:
+        return None, (
+            "growth not measured: oldest retained sample is only %.2fh old "
+            "(need >=%.1fh)" % (
+                (now - float(oldest["ts"])) / 3600.0, MIN_BASELINE_AGE_H)
+            + step_note
+        ), biggest, spans_step
+
+    if dt_h <= 0:
+        return None, (
+            "growth not measured: retention window has zero duration" + step_note
+        ), biggest, spans_step
+
+    return oldest, (
+        "anchored on window endpoints %s..%s (%.2fh, %+.1f MB, %d samples); "
+        "interior samples cannot bias this rate%s" % (
+            time.strftime("%H:%M:%SZ", time.gmtime(float(oldest["ts"]))),
+            time.strftime("%H:%M:%SZ", time.gmtime(float(newest["ts"]))),
+            dt_h, span_mb, len(samples), step_note)
+    ), biggest, spans_step
+
+
 def save_baseline(used_mb, pct, path=None):
     """Append a sample, retaining the older ones rather than replacing them.
 
@@ -589,11 +687,7 @@ def main():
     elif isinstance(base, dict) and "ts" in base:
         candidates = [base]
 
-    anchor = None
-    for s in sorted(candidates, key=lambda s: float(s["ts"])):
-        if (now - float(s["ts"])) / 3600.0 >= MIN_BASELINE_AGE_H:
-            anchor = s
-            break
+    anchor, trend_note, step_mb, spans_step = _pick_anchor(candidates, now)
 
     growth_mb_24h = None
     age_h = None
@@ -634,9 +728,16 @@ def main():
     # The guard still governs EXTRAPOLATION: a run under the guard reports no
     # rate, it does not refuse to record that it ran.
     baseline_written = False
+    retained_after_write = None
     if not args.no_baseline_write:
-        save_baseline(used_mb, pct)
+        # save_baseline() returns the payload it wrote, so the retained count
+        # is read back off the file that was actually written rather than
+        # computed from the pre-write list. #1080's Finding 5: len(candidates)
+        # was taken before save_baseline() appended and pruned, so the field
+        # published a number describing a ring that no longer existed.
+        _payload = save_baseline(used_mb, pct)
         baseline_written = True
+        retained_after_write = len(_payload.get("samples") or [])
 
     report = {
         "used_mb": round(used_mb, 1),
@@ -668,7 +769,18 @@ def main():
             else round((now - float(anchor["ts"])) / 3600.0, 2)
         ),
         "growth_anchor_used_mb": None if anchor is None else anchor["used_mb"],
-        "baseline_samples_retained": len(candidates),
+        # What the rate is actually resting on. `growth_measured` says only that
+        # an anchor EXISTED; these say whether the window it sits in contains a
+        # step large enough to flip the sign, and name the endpoints used. A
+        # pass that reads growth_mb_24h without these repeats #1082's error of
+        # treating a sign that was really the anchor's position as a property
+        # of the disk.
+        "growth_window_step_mb": round(step_mb, 1),
+        "growth_window_spans_step": spans_step,
+        "growth_trend_note": trend_note,
+        "baseline_samples_retained": (
+            len(candidates) if retained_after_write is None else retained_after_write
+        ),
         "baseline_retention_hours": _retention_h(),
         "deleted_open_leaks": leaks,
         "deleted_open_leaks_threshold_fds": 50,
@@ -730,6 +842,9 @@ def main():
         # actually observed is base_used_mb delta, reported in the JSON below.
         print(f"growth: {growth_mb_24h:+.0f} MB/24h normalised (baseline {age_h:.1f}h old)  "
               f"trigger={TRIGGER_GROWTH_MB_24H} -> {'MET' if growth_met else 'unmet'}")
+        if spans_step:
+            print(f"  WARNING: {trend_note}")
+    print(f"note: {trend_note}")
     print(f"\nVERDICT: {verdict}")
 
     print("\n=== LARGE MODEL WEIGHTS (sized by inode, NOT du) ===")
