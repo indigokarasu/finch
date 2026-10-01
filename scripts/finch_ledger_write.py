@@ -288,10 +288,81 @@ def find_stale_review_claims(doc, tolerance=REVIEW_LAG_TOLERANCE_S):
             continue
         lag = (best - review).total_seconds()
         if lag > tolerance:
-            hits.append(("tasks[%d]" % i, task.get("id"),
+            # The trail is the RECORD IDENTITY, not the list index. An index
+            # is a position, and a --doc that reorders the array moves it:
+            # finch_scan_tasklist_rerank.py sorts on every invocation, and a
+            # single dropped record shifts every later one. Measured live
+            # 2026-10-01 against the real ledger (203 tasks, 11 pre-existing
+            # contradictions): dropping one record at index 0 re-keyed all 11
+            # as NEW and the writer refused a write that authored none of the
+            # debt, and the sanctioned sort re-keyed 2 of 11 the same way. A
+            # key that moves cannot distinguish new damage from carried debt,
+            # which is the exact laundering path test 25 pins for rewording.
+            # Falls back to the index only for a record that has no id at all
+            # (0 of 203 live); such a record cannot be addressed by --task
+            # either, so it is already unaddressable rather than merely
+            # unkeyed.
+            tid = task.get("id")
+            hits.append((("task %s" % tid) if tid else ("tasks[%d]" % i),
+                         tid,
                          task.get("last_finch_review"),
                          _fmt(best), round(lag, 1), best_text))
     return hits
+
+
+def task_ids(doc):
+    """Every task id in `doc`, in order. Identity, not position.
+
+    A count cannot stand in for this. Measured live 2026-10-01: a document
+    that dropped one id and added a different one held the count at 203, so a
+    count-only shrink predicate read it as "no loss" while a finished task
+    record had been destroyed.
+    """
+    return [t.get("id") for t in (doc.get("tasks") or [])
+            if isinstance(t, dict) and t.get("id")]
+
+
+# A scan_note is a free-text string led by its own pass-time claim, e.g.
+# "2026-10-01T07:18:22Z (#1065): 5 of 6 sources...". Its identity is the
+# (#N) pass number, so a reworded note is the SAME note (not a loss) while a
+# vanished one is caught. Fall back to the full text for a note that carries
+# no pass number, where identity and text are the only thing available.
+_NOTE_ID_RE = re.compile(r"\(#(\d+)\)")
+
+
+def note_ids(doc):
+    out = []
+    for n in (doc.get("scan_notes") or []):
+        if not isinstance(n, str):
+            out.append(("raw", json.dumps(n, sort_keys=True)[:120]))
+            continue
+        m = _NOTE_ID_RE.search(n[:64])
+        out.append(("scan", m.group(1) if m else n))
+    return out
+
+
+def find_record_loss(incoming, on_disk):
+    """What a --doc would DELETE that is on disk right now.
+
+    Read-only. Returns (dropped_ids, dropped_notes) as lists of the human-
+    readable identity, in on-disk order.
+
+    This is a --doc-only control. A --set or --clamp-only pass cannot reach
+    the task array (--set tasks is refused outright), so it cannot lose a
+    record and must not be refused for this.
+
+    Refusal, not a merge-back: a document that has silently dropped 17 task
+    records has already diverged from the ledger in ways nobody has read, and
+    stitching the missing records back in would author 17 entries of prose
+    this tool cannot write. The write stops and a human sees the names.
+    """
+    live_ids, new_ids = set(task_ids(on_disk)), set(task_ids(incoming))
+    dropped_ids = [i for i in task_ids(on_disk) if i not in new_ids]
+    live_notes, new_notes = set(note_ids(on_disk)), set(note_ids(incoming))
+    dropped_notes = [n for n in note_ids(on_disk) if n not in new_notes]
+    del live_ids, new_ids, live_notes, new_notes
+    return dropped_ids, dropped_notes
+
 
 
 def find_unexpanded_lead_formats(doc):
@@ -525,6 +596,40 @@ def main():
         if not isinstance(incoming, dict) or "tasks" not in incoming:
             print("--doc must be a full ledger document (no 'tasks' key)")
             return 1
+        # A --doc REPLACES the whole file, so it is the one sanctioned write
+        # that can destroy records, and it had no control for it. Measured
+        # live 2026-10-01 against the real ledger: a --doc holding only the
+        # header keys took 203 task records and 6 scan_notes to 0 and 6 and
+        # reported "VERDICT: WRITTEN CLEAN -- 0 forward, 0 laundered". That is
+        # the 2026-09-30 #1058 loss (17 records destroyed by a full-document
+        # write) recurring in a path no detector can see afterwards, because a
+        # destroyed record leaves no forward stamp and no contradiction behind.
+        # The clean verdict was itself the misreport: those two counts measure
+        # CLOCK defects, and a missing record is not a clock defect.
+        # Judged on task-id and scan-note IDENTITY, never on counts -- a
+        # drop-one-add-one holds the count at 203 and a count predicate would
+        # wave it through.
+        dropped_ids, dropped_notes = find_record_loss(incoming, doc)
+        if dropped_ids or dropped_notes:
+            print("VERDICT: REFUSED -- this --doc would DELETE %d task record(s)"
+                  " and %d scan_note(s) that are on disk right now."
+                  % (len(dropped_ids), len(dropped_notes)))
+            for tid in dropped_ids[:20]:
+                print("   -%s" % tid)
+            if len(dropped_ids) > 20:
+                print("   ... and %d more" % (len(dropped_ids) - 20))
+            for n in dropped_notes[:20]:
+                print("   -scan_note %s" % n[1])
+            if len(dropped_notes) > 20:
+                print("   ... and %d more" % (len(dropped_notes) - 20))
+            print("   A --doc is a FULL replacement, so anything it omits is")
+            print("   gone, and a destroyed record leaves no forward stamp and")
+            print("   no contradiction for the guard to find afterwards. The")
+            print("   pass that meant to update one task rebuilt the file from")
+            print("   a partial read and wrote the gap out as if it were the")
+            print("   whole. Carry the current document, edit the one record,")
+            print("   and re-run. Nothing was written.")
+            return 6
         doc = incoming
 
     sets = _parse_sets(a.sets)
