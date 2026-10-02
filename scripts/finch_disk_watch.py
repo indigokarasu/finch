@@ -349,6 +349,54 @@ def _pick_anchor(candidates, now, current_mb=None):
     ), biggest, spans_step
 
 
+def _anchor_rate_envelope(candidates, now, current_mb, trigger):
+    """Range of rates the SAME retained ring produces under different anchors.
+
+    Returns (min, max, spread, sign_flips, trigger_inside) or None when fewer
+    than two distinct anchors exist (nothing to compare against).
+
+    Why this is published rather than left to the reader (#1097): the growth
+    rate is measured from ONE endpoint, so the question "is this number
+    actionable?" is really "how much does it move if the anchor had been a
+    different sample?". Measured on this host 2026-10-02: the published rate
+    was -409.6 MB/24h and UNMET, while a different legal anchor in the SAME ring
+    gave +7,905.5 -- MET -- with three sign flips in between. A reader given
+    only the headline cannot see that; the headline is one point in an
+    envelope that, on this window, contained the trigger itself.
+
+    Every anchor is a RETAINED sample, and `current_mb` is appended as the
+    window end exactly as _pick_anchor() does, so the published rate is always
+    inside this envelope rather than beside it. Distinct timestamps only: two
+    samples sharing a ts would give a zero span and a divide-by-zero, which is
+    exactly the crash a first probe of this took.
+    """
+    samples = sorted(
+        (s for s in candidates if isinstance(s, dict) and "ts" in s),
+        key=lambda s: float(s["ts"]),
+    )
+    if current_mb is not None:
+        samples = samples + [{"ts": now, "used_mb": float(current_mb)}]
+    seen, rates = set(), []
+    for s in samples:
+        t = float(s["ts"])
+        if t in seen:
+            continue
+        seen.add(t)
+        span_h = (now - t) / 3600.0
+        if span_h <= 0:
+            continue
+        rates.append((float(current_mb if current_mb is not None else s["used_mb"])
+                      - float(s["used_mb"])) / span_h * 24.0)
+    if len(rates) < 2:
+        return None
+    flips = sum(1 for i in range(1, len(rates)) if (rates[i] > 0) != (rates[i - 1] > 0))
+    lo, hi = min(rates), max(rates)
+    return (
+        round(lo, 1), round(hi, 1), round(hi - lo, 1), flips,
+        bool(lo <= trigger <= hi),
+    )
+
+
 def save_baseline(used_mb, pct, path=None):
     """Append a sample, retaining the older ones rather than replacing them.
 
@@ -734,6 +782,10 @@ def main():
     # growth_trend_note describe the SAME window growth_mb_24h is computed over
     # -- [anchor.ts, now] -- rather than stopping at the last saved sample.
     anchor, trend_note, step_mb, spans_step = _pick_anchor(candidates, now, used_mb)
+    # #1097: the published rate is ONE anchor's reading, so the spread it would
+    # take across the rest of the retained ring is published with it. Computed
+    # before growth_mb_24h so the report's own numbers stay mutually consistent.
+    anchor_env = _anchor_rate_envelope(candidates, now, used_mb, TRIGGER_GROWTH_MB_24H)
 
     growth_mb_24h = None
     age_h = None
@@ -837,6 +889,36 @@ def main():
             None if anchor is None
             else bool(float(anchor["ts"]) >= now - _retention_h() * 3600.0)
         ),
+        # How much the published rate MOVES when you pick a different anchor out
+        # of the same retained ring. Additive, no verdict, so it cannot flip a
+        # gate -- but it is the measurement that makes the rate actionable or
+        # not, and until now every pass had to hand-compute it from the ring.
+        #
+        # Measured 2026-10-02 (finch:work #1097). This pass published
+        # -409.6 MB/24h and UNMET; recomputing the same rate over each of the 12
+        # legal anchors gave -1,338.6 .. +7,905.5, spread 9,244.1, flipping sign
+        # three times, with the widest positive EXCEEDING the 5,120 trigger. So
+        # "the trigger is inside the instrument's own noise band, so a growth
+        # verdict at this anchor age is a statement about which sample got
+        # picked" (#1096) is TRUE and STRICTLY STRONGER than that pass claimed:
+        # the spread straddles the TRIGGER, not just zero.
+        #
+        # The reason is visible in the same report and is NOT a defect:
+        # growth_anchor_age_hours (4.31) exceeds growth_window_step_mb's
+        # horizon only when the anchor sits on the far side of a one-off step.
+        # A short write gap re-prunes the ring hard, which keeps a stale anchor
+        # alive across successive runs, and the rate is then measured across
+        # that step. Publish the number so the next pass reads it instead of
+        # rebuilding it.
+        "growth_anchor_rate_min_mb_24h": None if anchor_env is None else anchor_env[0],
+        "growth_anchor_rate_max_mb_24h": None if anchor_env is None else anchor_env[1],
+        "growth_anchor_rate_spread_mb_24h": None if anchor_env is None else anchor_env[2],
+        "growth_anchor_rate_sign_flips": None if anchor_env is None else anchor_env[3],
+        # True when some legal anchor would have MET the growth trigger while
+        # the published rate did not. This is a statement about the INSTRUMENT
+        # (its noise band contains the trigger), not about the disk: the caller
+        # still reads the pct leg and the level before acting.
+        "growth_trigger_inside_anchor_envelope": None if anchor_env is None else anchor_env[4],
         # What the rate is actually resting on. `growth_measured` says only that
         # an anchor EXISTED; these say whether the window it sits in contains a
         # step large enough to flip the sign, and name the endpoints used. A
