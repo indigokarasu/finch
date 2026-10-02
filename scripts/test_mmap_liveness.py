@@ -72,13 +72,56 @@ class TestMmapLiveness(unittest.TestCase):
         self.addCleanup(setattr, w.glob, "glob", self.real_glob)
 
     def in_use(self, pids):
-        """Run in_use_paths() against the synthetic tree, not the real /proc."""
+        """Run in_use_paths() against the synthetic tree, not the real /proc.
+
+        in_use_paths() returns (paths, pids_by_path, sources_by_path) since
+        #1101; this helper unwraps the membership set so the existing
+        assertions keep testing liveness rather than the container shape.
+        """
+        return self.provenance(pids)[0]
+
+    def provenance(self, pids):
+        """Same walk, but returning the full (paths, pids, sources) triple."""
         write_proc_tree(self.proc, pids)
         w.glob.glob = lambda pat: (
             [os.path.join(self.proc, str(pid)) for pid in pids]
             if pat == "/proc/[0-9]*" else self.real_glob(pat)
         )
         return w.in_use_paths()
+
+    # --- provenance: WHICH pid and WHICH source made the call (#1101) ---
+
+    def test_live_path_carries_the_pid_that_named_it(self):
+        """The boolean alone is not auditable; the pid makes it checkable.
+
+        This pass asked `systemctl --user is-active` and read "inactive",
+        concluding two weights were free. The unit is a SYSTEM unit. The report
+        said nothing that distinguished "free" from "free because you looked in
+        the wrong place", so the pid that names the path has to be published.
+        """
+        paths, by_pid, by_src = self.provenance({4242: {
+            "cmdline": "/usr/bin/llama-server\x00-m\x00/models/weight.gguf\x00",
+        }})
+        self.assertIn("/models/weight.gguf", paths)
+        self.assertEqual(by_pid["/models/weight.gguf"], {"4242"})
+        self.assertEqual(by_src["/models/weight.gguf"], {"argv"})
+
+    def test_each_source_is_labelled_distinctly(self):
+        """argv, maps and fd are three independent reads; they must not merge."""
+        _, _, by_src = self.provenance({7: {
+            "cmdline": "/usr/bin/llama-server\x00-m\x00/models/a.gguf\x00",
+            "maps": MAPS_LINE.format(addr="7f0000000000", perms="r--p",
+                                     off=0, path="/models/b.gguf"),
+        }})
+        self.assertEqual(by_src["/models/a.gguf"], {"argv"})
+        self.assertEqual(by_src["/models/b.gguf"], {"maps"})
+
+    def test_unreferenced_path_is_absent_from_the_provenance_maps(self):
+        """A free file must carry NO pid -- absence is the auditable form of False."""
+        _, by_pid, _ = self.provenance({9: {
+            "cmdline": "/usr/bin/unrelated\x00--flag\x00",
+        }})
+        self.assertNotIn("/models/free.gguf", by_pid)
 
     # --- the three positive shapes, each of which must be reported in use ---
 
@@ -166,7 +209,7 @@ class TestMmapLiveness(unittest.TestCase):
             [os.path.join(self.proc, "200"), os.path.join(self.proc, "201")]
             if pat == "/proc/[0-9]*" else self.real_glob(pat)
         )
-        got = w.in_use_paths()
+        got = w.in_use_paths()[0]
         self.assertIn("/models/a.gguf", got)
 
 

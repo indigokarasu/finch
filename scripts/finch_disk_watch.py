@@ -477,8 +477,14 @@ def top_dirs(paths=None, depth=2, limit=15):
     return out[:limit]
 
 
-def _reclaim_candidates(in_use):
+def _reclaim_candidates(in_use, in_use_pids=None, in_use_sources=None):
     """Large model-weight files, sized by (inode, nlink) instead of by du.
+
+    ``in_use_pids`` / ``in_use_sources`` are optional provenance maps produced by
+    :func:`in_use_paths` (path -> pids, path -> source names). They are kept
+    separate from the membership test on purpose: the boolean says whether a path
+    is live, the maps say WHO says so and by which of the three /proc reads, so a
+    reader can audit the claim instead of trusting it (#1101).
 
     ``du`` counts a hardlinked file once per name it finds, so a weight that is
     both served from a service directory and present in a content-addressed
@@ -490,6 +496,8 @@ def _reclaim_candidates(in_use):
     """
     seen_inodes = {}
     out = []
+    in_use_pids = in_use_pids or {}
+    in_use_sources = in_use_sources or {}
     for base in RECLAIM_ROOTS:
         for dirpath, _dirnames, filenames in os.walk(base):
             # A blob store's own names are the OTHER links; keep them out of the
@@ -532,6 +540,20 @@ def _reclaim_candidates(in_use):
             "other_links": links - 1,
             "du_would_report_mb": size_mb,
             "in_use_by_running_process": live,
+            # WHICH live reference named this path, and where the answer came
+            # from (#1101). The boolean alone is not auditable: this pass asked
+            # `systemctl --user is-active moondream-vision.service`, got
+            # "inactive", and had already concluded the service was gone and the
+            # two weights free -- a false zero 1,744.5 MB wide, produced by
+            # querying the wrong systemd SCOPE (the unit is a system unit; the
+            # process sits in /system.slice/moondream-vision.service, ppid 1).
+            # The instrument was right and the reader was wrong, and nothing in
+            # the report distinguished "free" from "free because you looked in
+            # the wrong place". These are additive provenance fields carrying
+            # the pids that named the path, so the claim can be checked instead
+            # of trusted. General rule (walk /proc), not a host value.
+            "in_use_pids": sorted(in_use_pids.get(p, ())),
+            "in_use_sources": sorted(in_use_sources.get(p, ())),
             "hardlink_overreport_mb": hardlink_overreport_mb,
             "truly_reclaimable_mb": size_mb if reclaimable else 0.0,
         })
@@ -565,7 +587,16 @@ def in_use_paths():
     General rule (walk /proc), not a host value.
     """
     out = set()
+    pids = {}
+    sources = {}
+
+    def _record(path, pid, source):
+        out.add(path)
+        pids.setdefault(path, set()).add(pid)
+        sources.setdefault(path, set()).add(source)
+
     for piddir in glob.glob("/proc/[0-9]*"):
+        pid = os.path.basename(piddir)
         # Each source is independent, so each is read in its own try. A single
         # `except OSError: continue` on the cmdline read used to abandon the
         # fd and maps walks for that pid: an unreadable argv (a process
@@ -578,7 +609,7 @@ def in_use_paths():
             with open(os.path.join(piddir, "cmdline"), "rb") as fh:
                 for tok in fh.read().split(b"\0"):
                     if tok.startswith(b"/") and os.sep.encode() in tok[1:]:
-                        out.add(os.fsdecode(tok.rstrip(b"/")))
+                        _record(os.fsdecode(tok.rstrip(b"/")), pid, "argv")
         except OSError:
             pass
         try:
@@ -599,7 +630,7 @@ def in_use_paths():
                     if backing.endswith(" (deleted)"):
                         backing = backing[: -len(" (deleted)")]
                     if backing.startswith("/"):
-                        out.add(backing)
+                        _record(backing, pid, "maps")
         except OSError:
             pass
         fddir = os.path.join(piddir, "fd")
@@ -609,15 +640,16 @@ def in_use_paths():
             continue
         for fd in fds:
             try:
-                out.add(os.path.realpath(os.path.join(fddir, fd)))
+                _record(os.path.realpath(os.path.join(fddir, fd)), pid, "fd")
             except OSError:
                 continue
-    return out
+    return out, pids, sources
 
 
 def reclaim_candidates():
     """Public entry: hardlink-correct reclaim sizing, discounted by live process use."""
-    return _reclaim_candidates(in_use=in_use_paths())
+    in_use, pids, sources = in_use_paths()
+    return _reclaim_candidates(in_use, in_use_pids=pids, in_use_sources=sources)
 
 
 def deleted_open_leaks(threshold=50, top=8):
