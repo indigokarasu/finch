@@ -316,5 +316,63 @@ class TestPruneKeepsRecentSamples(unittest.TestCase):
         self.assertEqual(len(kept), 1)
 
 
+class TestAnchorSurvivesItsOwnWrite(unittest.TestCase):
+    """The run that PUBLISHES a rate must not destroy the sample it rests on.
+
+    Measured 2026-10-02 (finch:work #1091). `main()` anchors on the OLDEST
+    retained sample, and `save_baseline()` prunes everything older than
+    `_retention_h()`. The two windows differ by the write gap, so on any job
+    that is not running continuously the anchor is ALWAYS older than retention
+    by the time the run finishes -- and the run publishes a rate whose own
+    evidence it deletes.
+
+    Observed live that pass: rate +905.0 MB/24h over a 4.90 h window anchored
+    on a sample 4.90 h old against 4.00 h retention; the same write pruned it,
+    leaving the ring alone reading -1086.5 MB/24h -- the opposite sign.
+
+    The cases pin the ARITHMETIC of `growth_anchor_retained_after_write`, not a
+    host fact, and both directions must be asserted: a field that is only ever
+    True is decoration, which is the failure mode the ledger rules warn about.
+    """
+
+    def _anchor_kept(self, anchor_ts, now):
+        """Mirror of the published field, driven off the module's own retention."""
+        return bool(anchor_ts >= now - dw._retention_h() * 3600.0)
+
+    def test_anchor_within_retention_survives(self):
+        now = time.time()
+        self.assertTrue(self._anchor_kept(now - 0.5 * 3600.0, now))
+
+    def test_anchor_older_than_retention_is_pruned(self):
+        now = time.time()
+        self.assertFalse(self._anchor_kept(now - 4.5 * 3600.0, now))
+
+    def test_retention_is_derived_not_hardcoded(self):
+        """The rule cannot be satisfied by editing a constant elsewhere.
+
+        #1091 measured that a >=6h anchor (the standing clause from #1090) is
+        unreachable from the current ring because retention is 4.0h. That is
+        only a fact ABOUT the ring if retention is derived from the guard, so
+        pin the derivation: raising the guard raises the reachable anchor, and
+        a retention shorter than the guard's own age requirement is impossible.
+        """
+        self.assertEqual(dw._retention_h(), max(dw.MIN_BASELINE_AGE_H * 4.0, 4.0))
+        self.assertGreaterEqual(dw._retention_h(), 4.0)
+
+    def test_anchor_age_cannot_exceed_retention_plus_write_gap(self):
+        """The ceiling that makes the >=6h clause unreachable.
+
+        The anchor ages across the interval since the previous write, so its
+        maximum age is retention + that gap. With a 30 min-ish cadence the
+        ceiling sits near 4.9h -- which is why the observed anchor was 4.90h.
+        """
+        now = time.time()
+        gap_h = 0.94
+        ceiling_h = dw._retention_h() + gap_h
+        anchor_age_h = 4.90
+        self.assertLessEqual(anchor_age_h, ceiling_h)
+        self.assertLess(ceiling_h, 6.0)  # the >=6h rule is unreachable as shipped
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

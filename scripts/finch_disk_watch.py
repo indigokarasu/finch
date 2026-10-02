@@ -815,6 +815,28 @@ def main():
             else round((now - float(anchor["ts"])) / 3600.0, 2)
         ),
         "growth_anchor_used_mb": None if anchor is None else anchor["used_mb"],
+        # Whether the rate's own anchor will still EXIST once this run has
+        # written the ring. `_prune_samples` drops anything older than
+        # `_retention_h()`, and `main()` anchors on samples[0] -- the OLDEST
+        # retained one -- so a run whose anchor age already exceeds retention
+        # publishes a rate it also destroys the evidence for.
+        #
+        # Measured 2026-10-02 (finch:work #1091). The rate published +905.0
+        # MB/24h over a 4.90 h window anchored on a sample from 19:41:53Z;
+        # that sample was 4.90 h old against a 4.00 h retention, so the same
+        # run's save_baseline() pruned it. The rate IS re-derivable from the
+        # report's own fields, but the ring alone then reads -1086.5 MB/24h --
+        # the OPPOSITE SIGN -- so a reader who checks the ring against the
+        # headline cannot tell which is right, and the two numbers are the same
+        # measurement taken over overlapping-but-different windows.
+        #
+        # `growth_measured` cannot catch this: it asserts only that an anchor
+        # existed. Publishes the arithmetic, not a verdict, so it changes no
+        # existing field and cannot flip a gate.
+        "growth_anchor_retained_after_write": (
+            None if anchor is None
+            else bool(float(anchor["ts"]) >= now - _retention_h() * 3600.0)
+        ),
         # What the rate is actually resting on. `growth_measured` says only that
         # an anchor EXISTED; these say whether the window it sits in contains a
         # step large enough to flip the sign, and name the endpoints used. A
