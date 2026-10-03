@@ -22,8 +22,9 @@ Structural analysis of Hermes Agent's skills security system. Condensed referenc
 **False positive** when describing what a command does.
 **Fix**: Rephrase to "proposals that the user has approved."
 
-### `curl | python3` → Pipe to interpreter
-**Blocked by Tirith**. Save to file first, then read.
+### Pipe-to-interpreter → Blocked
+**Blocked by Tirith**. Any download piped straight into a Python interpreter is
+refused. Save the download to a file first, then read it.
 
 ## Trust Model Gaps
 

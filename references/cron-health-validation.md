@@ -96,7 +96,7 @@ acting:
 
 | scope | path |
 |---|---|
-| root | `~/.hermes/.env` |
+| root | the root-scope Hermes secrets file |
 | profile | `~/.hermes/profiles/<profile>/.env` |
 
 Live 2026-09-27: a 3-job family was blocked on `$OCAS_OPERATOR_EMAIL` +
