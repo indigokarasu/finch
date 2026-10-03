@@ -18,8 +18,15 @@ is delivered. Resolution failure is a failure, not a skip -- a control that
 cannot find its fixtures must not report PASSED.
 
 Run:  python3 test_kdp_body_claims.py
+      python3 test_kdp_body_claims.py --help
 Exit: 0 control passed, 1 control failed, 2 could not measure.
+
+The watcher under test (finch_kdp_watch.py) ships with the ocas-finch skill
+repo, not this one, so it is normally ABSENT from a checkout of indigokarasu/
+finch. That is an unmeasurable host, not a passing control: this script exits 2
+without asserting anything rather than reporting PASSED.
 """
+import argparse
 import importlib.util
 import os
 import sys
@@ -89,11 +96,26 @@ def resolve(svc, w, subject_substr):
 
 
 def main():
-    if not os.path.exists(getattr(load_watcher(), "CRED", "")):
+    ap = argparse.ArgumentParser(
+        description="Negative control for finch_kdp_watch's BODY_CLAIMS "
+                    "vocabulary. Exits 0 if the exclusivity claim is confined "
+                    "to the release notice, 1 if it drifted, 2 if this host "
+                    "cannot measure it.")
+    ap.parse_args()
+    if not os.path.exists(WATCH):
+        print("NOT MEASURED: %s is absent from this checkout. The watcher "
+              "under test ships with the ocas-finch skill repo." % WATCH)
+        return 2
+    try:
+        w = load_watcher()
+    except Exception as exc:  # noqa: BLE001 - report, never traceback
+        print("NOT MEASURED: could not load %s (%s: %s)"
+              % (WATCH, type(exc).__name__, exc))
+        return 2
+    if not os.path.exists(getattr(w, "CRED", "")):
         print("NOT MEASURED: watcher credential file absent on this host; "
               "there is no local corpus to assert against.")
         return 2
-    w = load_watcher()
     from googleapiclient.discovery import build
     svc = build("gmail", "v1", credentials=w.load_creds(w.CRED),
                 cache_discovery=False)
