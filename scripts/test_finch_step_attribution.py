@@ -133,7 +133,7 @@ class TestDeletionScan(unittest.TestCase):
         self.dir = tempfile.mkdtemp(prefix="finch_attr_manifest_")
         stamp = "2026-10-03T00:10:12Z"
         body = {
-            "target": "/root/.hermes/cache/scratch/swifttool",
+            "target": "<fs-root>/.hermes/cache/scratch/swifttool",
             "file_count": 1110,
             "total_bytes": 5828052817,
             "manifested_at_utc": "2026-10-03T00:10:12.098630+00:00",
@@ -149,7 +149,7 @@ class TestDeletionScan(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0]["mb"], round(5828052817 / 1048576, 1))
         self.assertEqual(found[0]["target"],
-                         "/root/.hermes/cache/scratch/swifttool")
+                         "<fs-root>/.hermes/cache/scratch/swifttool")
         self.assertEqual(found[0]["file_count"], 1110)
 
     def test_excludes_manifest_outside_window(self):

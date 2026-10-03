@@ -54,8 +54,44 @@ import time
 # The custodian's append-only pre-removal evidence. A general convention,
 # not a host value: any directory of reap manifests can be passed with
 # --manifest-dir, and the glob is on the filename prefix alone.
+HOME_DIR = os.path.expanduser("~")
+# Default data dir carries an optional suffix on some platforms, so the
+# default home is not always literally ~/.hermes. Mirrors the convention
+# in finch_disk_watch.py so the two scripts resolve identically.
+_DATA_SUFFIX = os.environ.get("HERMES_DATA_DIR_SUFFIX", "")
+
+
+def _default_hermes_home():
+    return os.path.join(HOME_DIR, ".hermes" + _DATA_SUFFIX)
+
+
+def _profile_root():
+    """This host's profile data dir, resolved from the environment.
+
+    Order: $HERMES_HOME (the platform honours it ahead of the default
+    home when a profile is active), then this script's own path under
+    .../profiles/<name>/..., then the default home's `active_profile`
+    marker. No host value is baked in, so the same code works on a
+    checkout that lives anywhere -- which is exactly why the literal
+    absolute path it replaced was a defect, not just a PII-gate
+    finding: it silently pointed the scan at the author's tree and
+    reported nothing anywhere else.
+    """
+    hermes_home = os.environ.get("HERMES_HOME", "").strip()
+    if hermes_home and os.path.isdir(hermes_home):
+        return hermes_home
+    here = os.path.abspath(__file__)
+    parts = here.split(os.sep)
+    for i, p in enumerate(parts):
+        if p == "profiles" and i + 1 < len(parts):
+            cand = os.path.join(*parts[: i + 2])
+            if os.path.isdir(cand):
+                return cand
+    return _default_hermes_home()
+
+
 DEFAULT_MANIFEST_DIRS = (
-    "/root/.hermes/profiles/indigo/commons/data/ocas-custodian",
+    os.path.join(_profile_root(), "commons", "data", "ocas-custodian"),
 )
 MANIFEST_PREFIX = "reap-manifest-"
 
@@ -182,7 +218,7 @@ def run_control(t_lo, t_hi):
     assuming anything about the window under investigation. If that fails,
     the scan proved nothing and every zero below is unknown, not absent.
     """
-    probe_root = "/root/.hermes/profiles/indigo/state"
+    probe_root = os.path.join(_profile_root(), "state")
     newest = None
     if os.path.isdir(probe_root):
         for dirpath, dirnames, filenames in os.walk(probe_root):
