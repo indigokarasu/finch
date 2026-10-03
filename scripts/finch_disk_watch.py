@@ -349,6 +349,77 @@ def _pick_anchor(candidates, now, current_mb=None):
     ), biggest, spans_step
 
 
+def _post_step_residual(samples, step_mb, current_mb=None, now=None):
+    """Rate of the window with the dominant step REMOVED, or None.
+
+    Returns (rate_mb_24h, window_start_iso, hours, n_samples) or None when the
+    step test does not fire, or when the tail after the step cannot support a
+    rate (fewer than two distinct timestamps, or zero duration).
+
+    Why this is published (#1127). `spans_step` already tells a reader that the
+    window contains one jump larger than everything else combined, and
+    `growth_window_step_mb` already names its size. Neither answers the question
+    the gate actually turns on: is the disk growing at that rate, or was the
+    rate manufactured by a one-off arrival that has already landed? Measured on
+    this host: the published rate was +16,219.2 MB/24h MET against the 5,120
+    trigger, the step was +2,523.3 MB, and the residual -- the SAME window with
+    the step's interval removed -- was +2,735.7 MB/24h, UNMET. The headline was
+    one arrival on a 3.97h anchor; the disk had risen 247.9 MB in 2.18h.
+
+    Why it is computed by REMOVING THE STEP'S INTERVAL rather than by
+    subtracting the step's MB: subtracting a size is only valid if the step was
+    instantaneous, and it was not -- the +2,523.3 MB arrived between two
+    samples ~52 minutes apart, so its true contribution to the rate is spread
+    over that gap. Removing the interval and re-deriving from the surviving
+    samples makes no assumption about how fast the bytes landed, and it is the
+    same computation over a real sub-window that the headline is. The rule is
+    scale-free and constant-free (one step, or none) so it cannot be tuned to
+    one machine's traffic.
+    """
+    if not step_mb:
+        return None
+    s = sorted(
+        (x for x in samples if isinstance(x, dict) and "ts" in x),
+        key=lambda x: float(x["ts"]),
+    )
+    if current_mb is not None:
+        s = s + [{"ts": now, "used_mb": float(current_mb)}]
+    if len(s) < 3:
+        return None
+    steps = _window_steps(s)
+    idx = max(range(len(steps)), key=lambda i: abs(steps[i]))
+    # Verify dominance here rather than trusting the caller's step_mb: the
+    # same predicate _pick_anchor applies, so the function is correct for any
+    # caller and not only for the one that already ran the step test.
+    biggest = abs(steps[idx])
+    rest = sum(abs(x) for x in steps) - biggest
+    if biggest <= 0 or biggest <= rest:
+        return None
+    tail = s[idx + 1:]
+    if len(tail) < 2:
+        return None
+    a, b = tail[0], tail[-1]
+    dt_h = (float(b["ts"]) - float(a["ts"])) / 3600.0
+    # The age guard is the whole point. A step in the FINAL interval still
+    # leaves two samples (the post-step reading and this run's own), so a
+    # length check passes while the surviving window is a fraction of an hour
+    # -- and normalising a short interval to 24h manufactures a large rate out
+    # of ordinary churn. That artifact is the same shape as #1028's
+    # 11.9h-normalised number, so the residual abstains rather than publish it.
+    # The comparison is <=, not <, while _pick_anchor uses <: the headline is
+    # anchored on a WINDOW ENDPOINT whose age only bounds its span, whereas this
+    # window is a strictly shorter SUB-window of that headline's, so at the
+    # same instant the same constant demands more of it.
+    if dt_h <= MIN_BASELINE_AGE_H:
+        return None
+    return (
+        (float(b["used_mb"]) - float(a["used_mb"])) / dt_h * 24.0,
+        time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(float(a["ts"]))),
+        dt_h,
+        len(tail),
+    )
+
+
 def _anchor_rate_envelope(candidates, now, current_mb, trigger):
     """Range of rates the SAME retained ring produces under different anchors.
 
@@ -818,6 +889,12 @@ def main():
     # take across the rest of the retained ring is published with it. Computed
     # before growth_mb_24h so the report's own numbers stay mutually consistent.
     anchor_env = _anchor_rate_envelope(candidates, now, used_mb, TRIGGER_GROWTH_MB_24H)
+    # #1127: when the window is dominated by one step, the rate that decides
+    # "is the disk actually growing" is the residual over the window with that
+    # step's interval removed. Published beside the headline so a reader never
+    # has to re-derive it by hand from the ring.
+    residual = _post_step_residual(
+        candidates, step_mb, used_mb, now) if spans_step else None
 
     growth_mb_24h = None
     age_h = None
@@ -859,6 +936,7 @@ def main():
     # rate, it does not refuse to record that it ran.
     baseline_written = False
     retained_after_write = None
+    anchor_survived_write = None
     if not args.no_baseline_write:
         # save_baseline() returns the payload it wrote, so the retained count
         # is read back off the file that was actually written rather than
@@ -868,6 +946,33 @@ def main():
         _payload = save_baseline(used_mb, pct)
         baseline_written = True
         retained_after_write = len(_payload.get("samples") or [])
+        # Measured 2026-10-02 (finch:work #1125). This field used to RE-DERIVE
+        # survival from a clock captured ~92 s earlier at line 806:
+        #   anchor["ts"] >= now - retention
+        # evaluated against `now` -- the instant the anchor was CHOSEN -- while
+        # the prune that actually deleted it ran inside save_baseline() at a
+        # LATER time.time(). A run whose anchor sat within its own report-
+        # construction time of the boundary therefore published
+        # retained_after_write=TRUE for an anchor the same run had just deleted.
+        # Measured live: anchor 78456.2 @ 19:04:14Z, margin under retention at
+        # eval time 91 s, report build time 92 s, prune cutoff 19:04:15Z -- the
+        # anchor is 1 s BEFORE the cutoff and absent from the ring on disk.
+        #
+        # The name was the tell: "_after_write" is a claim about the state of
+        # the file AFTER the write, and the old expression could not possibly
+        # answer it -- it never consulted the file. The fix needs no clock and
+        # no second prune: save_baseline() RETURNS the payload it wrote, and
+        # membership in `_payload["samples"]` IS the ground truth of what
+        # survived. This is the same repair as #1080's Finding 5 one level up
+        # -- that one fixed the COUNT by reading back the written payload; the
+        # predicate was left re-deriving from a stale clock.
+        _survived_tss = {
+            float(s.get("ts", -1)) for s in (_payload.get("samples") or [])
+        }
+        anchor_survived_write = (
+            None if anchor is None
+            else float(anchor["ts"]) in _survived_tss
+        )
 
     report = {
         "used_mb": round(used_mb, 1),
@@ -917,10 +1022,7 @@ def main():
         # `growth_measured` cannot catch this: it asserts only that an anchor
         # existed. Publishes the arithmetic, not a verdict, so it changes no
         # existing field and cannot flip a gate.
-        "growth_anchor_retained_after_write": (
-            None if anchor is None
-            else bool(float(anchor["ts"]) >= now - _retention_h() * 3600.0)
-        ),
+        "growth_anchor_retained_after_write": anchor_survived_write,
         # How much the published rate MOVES when you pick a different anchor out
         # of the same retained ring. Additive, no verdict, so it cannot flip a
         # gate -- but it is the measurement that makes the rate actionable or
@@ -959,6 +1061,29 @@ def main():
         # of the disk.
         "growth_window_step_mb": round(step_mb, 1),
         "growth_window_spans_step": spans_step,
+        # The rate over the SAME window with the dominant step's interval
+        # removed, and whether that residual clears the trigger. This is the
+        # field that separates "this disk is growing" from "one arrival landed
+        # inside the anchor window": on a dominated window the two can sit on
+        # OPPOSITE SIDES of the trigger, and the headline alone cannot show
+        # that. None whenever the step test did not fire or the tail is too
+        # short to carry a rate.
+        "growth_post_step_residual_mb_24h": (
+            None if residual is None else round(residual[0], 1)
+        ),
+        "growth_post_step_residual_window": (
+            None if residual is None else residual[1]
+        ),
+        "growth_post_step_residual_hours": (
+            None if residual is None else round(residual[2], 2)
+        ),
+        "growth_post_step_residual_samples": (
+            None if residual is None else residual[3]
+        ),
+        "growth_post_step_residual_met": (
+            None if residual is None
+            else residual[0] >= TRIGGER_GROWTH_MB_24H
+        ),
         "growth_trend_note": trend_note,
         "baseline_samples_retained": (
             len(candidates) if retained_after_write is None else retained_after_write
