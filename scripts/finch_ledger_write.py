@@ -476,6 +476,31 @@ def clamp(doc, now=None, dry_run=False):
                             "delta_s": round((t - now).total_seconds(), 1)})
             doc[k] = stamp
 
+    # NESTED header paths carry the same claim one level down, and the guard
+    # checks them, so skipping them here makes --clamp-only structurally unable
+    # to clear a verdict the guard itself raises: the stamp is detected, never
+    # repaired, and every later pass reads VERDICT 1 forever. Walk the dotted
+    # paths explicitly; a path whose parent is missing or not a dict is left
+    # alone, because this tool removes false claims rather than inventing them.
+    for path in getattr(guard, "NESTED_HEADER_FIELDS", ()):
+        parts = str(path).split(".")
+        node = doc
+        for part in parts[:-1]:
+            if not isinstance(node, dict):
+                node = None
+                break
+            node = node.get(part)
+        if not isinstance(node, dict):
+            continue
+        k = parts[-1]
+        v = node.get(k)
+        t = guard._parse(v)
+        if t is not None and t > now:
+            changes.append({"scope": "header", "id": "-", "field": path,
+                            "from": v, "to": stamp,
+                            "delta_s": round((t - now).total_seconds(), 1)})
+            node[k] = stamp
+
     for task in doc.get("tasks", []) or []:
         for k in guard.TASK_FIELDS:
             v = task.get(k)

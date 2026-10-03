@@ -13,7 +13,7 @@ includes:
 - scripts/**
 metadata:
   author: <profile> Karasu (indigokarasu)
-  version: "3.2.1"
+  version: "3.2.2"
   hermes:
     category: software-development
     tags:
@@ -92,6 +92,37 @@ burst of `rm` also trips a mass-deletion guard, and scratch under
 block. **When a command is blocked, change its shape rather than re-issuing a
 variant.** The rest: `references/scanning-traps.md` § Agent toolchain in cron.
 
+**A probe that crashes on one weird input measures nothing — and it usually
+looks like a hang, not a crash.** `find … -printf "%s %p\n"` into
+`subprocess.run(…, text=True)` raised `UnicodeDecodeError` at byte offset
+50,508,059 on a non-UTF8 filename, after 8 minutes of walking the tree. Read
+child stdout as **bytes** and decode with `surrogateescape`, and terminate
+records with `\0` rather than `\n` so a newline inside a filename cannot split
+one record into two. A disk/space attribution that dies mid-walk reports zero
+attribution, which reads exactly like "nothing grew" — the most dangerous
+possible failure for that class of question. Same class: a long-running
+`nohup` walk that exits without writing its output looks identical to one still
+running; check that the output exists *and* the process is gone before
+believing either.
+
+**An identity check must sweep every path it intends to compare, or it reports
+its own incompleteness as a refutation.** Assert identity on `(st_dev,
+st_ino)`, never on a path string: two mounts of one file differ in `st_dev` and
+agree in `st_ino`, so a path check reads as absence while an inode check reads
+as identity. Measured: the same file set is reachable under `/var/lib/docker/
+rootfs/…` and `/var/lib/containerd/…` with **path overlap 0 and inode overlap
+100%** — a path-identity assertion calls that "two disjoint sets" and a reader
+concludes the du double-count is absent when it is real.
+
+**To decide whether a writer is bounded you need an INTERVAL, not two
+point-in-time counts.** Comparing a file count at hour N and hour N+2 cannot
+distinguish a slow-growing pool from a saturated ring buffer, and concluding
+"bounded" from it is the recurring error on the disk task: the pool was declared
+a plateau at 288 MB while it was actually climbing past 400 MB. Sample the
+count across a live interval (census in, census out, count the deletions) and
+record the **oldest file's age** — an oldest-file age younger than the window
+you are calling saturated refutes the plateau on its own.
+
 ## Workflow — the core loop
 
 Finch owns its core domain operations; it does NOT own trigger detection,
@@ -121,6 +152,34 @@ before changing any of them.
   the window and note it in the journal. *(It does not cover a restore: a
   duplicate window reads as a ~0h gap, so every clause passes while the work is
   redone.)*
+- **A gate run BEFORE the write is not evidence the write was clean.** A pass
+  must re-measure AFTER writing, from disk, and report *that*. Measured
+  2026-10-02 (finch:work #1095): the prior pass listed "pre-write ledger guard
+  EXIT 0 / LEDGER CLEAN" in its own pick rationale and the write it
+  immediately followed left THREE forward stamps (+1947s) on the ledger. The
+  receipts file is the proof, not the prose: `forward_count=0` before the write,
+  `forward_count=3` after it. A guard cited as evidence FOR a pass is a claim
+  about the world made from an instrument; only the post-write re-measure
+  separates "the gate passed" from "the write was clean."
+- **A refusal can be CORRECT and still block the truth from being written.**
+  `finch_tasklist_single_write.py` scans a whole field for the ISO pattern and
+  compares every match to `now()`, so a narrative that QUOTES a forward stamp
+  is indistinguishable from one that ASSERTS one — the pass that diagnosed the
+  defect could not record the diagnosis (#1095 aborted, exit 1, ledger
+  untouched). Prefer a non-ISO rendering of a quoted instant ("02:05:00 UTC",
+  "the same 02:05:00 reading") and say so in the entry: that is a workaround on
+  your own content, not a repair of the tool. The durable fix is positional —
+  only a stamp in a claim-bearing field, or at the LEAD of a narrative, is a
+  pass-time claim, exactly the distinction `clamp_narrative_leads()` already
+  draws in `finch_ledger_write.py`.
+- **A writer that REFORMATS the ledger changes the file size without changing
+  the data** — and a shrinking byte count is the #1058 record-loss signature.
+  Measured #1095: the sanctioned single-shot writer emitted `indent=1` while
+  the file on disk was `indent=2`, for −1,363 bytes on a write that ADDED a
+  work_log entry. Do not adjudicate a delta by size. Verify record IDENTITY
+  against a pre-write backup: task-id and scan_note-id sets and ORDER, plus
+  per-task `work_log` lengths. Zero lost records plus a reindent is a clean
+  write; a byte delta alone proves nothing either way.
 - **Close the ledger's clock before AND after writing:**
   `python3 scripts/finch_ledger_guard.py` (`--repair`; `--json` for the
   `*_measured` flags) — no timestamp in `task-list.json` may be later than the
@@ -181,6 +240,7 @@ Steering entries only — every other file is in `references/finch-support-map.m
 | `references/ledger-and-clock-protocol.md` | Before any ledger, journal, or scan-number write, and before changing a clock rule |
 | `references/scripts-reference.md` | Before running or changing a script — flags, exit codes, tests to run first |
 | `references/scanning-gotchas.md` · `finch-scan-pitfalls.md` · `cron-health-validation.md` · `scan-error-classification.md` · `email-mcp-triage.md` | During a scan — per-source mechanics and error classification |
+| `references/mail-self-reference-and-zero-vacuity.md` | Building or running ANY mail watcher — a keyword probe here matches finch's own output, and a zero must be proved non-vacuous before it is quoted |
 | `references/work-execution-procedures.md` · `work-prescribed-fix-selfrecovery-guard.md` · `signal-triage-before-fix.md` · `already-fixed-verification.md` | Before any finch:work task, and before honouring a prescribed fix |
 | `references/pitfalls.md` · `operational-gotchas.md` · `file-governance.md` · `forgetting_curve.md` · `mining_methodology.md` · `manual-run-verification.md` | Before any finch op; routing targets; compaction; mining; "run finch" and 401 triage |
 
