@@ -23,6 +23,12 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Shared fixture-deletion guard; see rmtree_confined.py for why the invariant is
+# register-at-creation rather than "lives under /tmp".
+from rmtree_confined import new_root as _new_root  # noqa: E402
+from rmtree_confined import rmtree_confined as _rmtree  # noqa: E402
+
 SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "finch_disk_watch.py")
 PASS, FAIL = [], []
 
@@ -138,15 +144,14 @@ with tempfile.TemporaryDirectory() as home:
 
     # 4. With NO profile resolvable, it must still measure rather than crash.
     print("4. unresolved profile still yields a usable path (no crash)")
-    empty_home = tempfile.mkdtemp()
+    empty_home = _new_root(tempfile.mkdtemp(prefix="finch_scope_empty_"))
     try:
         c, err = run(empty_home, "m._baseline_path()", make_profiles=())
         print(f"     -> {c}")
         check("no ERROR", err is None, str(err))
         check("non-empty path", bool(c), f"got {c!r}")
     finally:
-        import shutil
-        shutil.rmtree(empty_home, ignore_errors=True)
+        _rmtree(empty_home)
 
     # 5. Round-trip: save then load reads the SAME file the path names. This is
     #    the invariant the whole gate rests on -- a rate is only meaningful if

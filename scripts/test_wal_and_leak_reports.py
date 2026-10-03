@@ -30,6 +30,12 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Shared fixture-deletion guard; see rmtree_confined.py for why the invariant is
+# register-at-creation rather than "lives under /tmp".
+from rmtree_confined import mkfixture as _mkfixture  # noqa: E402
+from rmtree_confined import rmtree_confined as _rmtree  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import finch_disk_watch as w  # noqa: E402
 
 
@@ -52,10 +58,10 @@ def write_wal(path, frame_salts, page_size=4096, header_salt=(0x1111, 0x2222)):
 
 class TestWalLiveBytes(unittest.TestCase):
     def setUp(self):
-        self.dir = tempfile.mkdtemp()
+        self.dir = _mkfixture(prefix="finch_wal_")
 
     def tearDown(self):
-        shutil.rmtree(self.dir, ignore_errors=True)
+        _rmtree(self.dir)
 
     def test_all_frames_live(self):
         """Every frame carries the header salt -> the whole file is live."""
@@ -121,7 +127,7 @@ class TestDeletedOpenQualification(unittest.TestCase):
 
 class TestDbBloatSidecars(unittest.TestCase):
     def setUp(self):
-        self.dir = tempfile.mkdtemp()
+        self.dir = _mkfixture(prefix="finch_bloat_")
         self.db = os.path.join(self.dir, "t.db")
         import sqlite3
         con = sqlite3.connect(self.db)
@@ -139,7 +145,7 @@ class TestDbBloatSidecars(unittest.TestCase):
 
     def tearDown(self):
         w.DB_TARGETS = self._saved
-        shutil.rmtree(self.dir, ignore_errors=True)
+        _rmtree(self.dir)
 
     def test_sidecar_fields_present_when_wal_exists(self):
         write_wal(self.db + "-wal", [(0x1111, 0x2222)] * 3 + [(0x0BAD, 0x0BAD)] * 60)

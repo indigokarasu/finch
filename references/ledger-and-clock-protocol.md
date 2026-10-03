@@ -38,6 +38,61 @@ different defects that look alike in the arithmetic.
 Run-id signature and the full detection recipe:
 `references/pitfalls.md` § "A restored occurrence re-fires the job".
 
+## 1a. A journal stamp must be in the field the NEXT gate reads (2026-10-01)
+
+The writer (`finch_journal_write.py`) stamps `timestamp` from its own clock. It does
+**not** create `completed_at`/`as_of` — supply them in `--doc` and the writer
+preserves/clamps them to its real clock (verified 2026-10-01: supplying
+`2026-10-02T09:00:00Z` was clamped to now, 2 stamps, 0 forward remaining).
+
+Measured 2026-10-01 across 14 recent dailies, the stamp field name is
+**inconsistent**: `timestamp` (most), `started_at` (09-30, 10-01), or
+`completed_at`+`as_of` (09-27, 09-28). The duplicate-fire gate in SKILL.md step 3
+reads `completed_at`/`as_of`. So an entry written only with `timestamp` is
+**invisible to its own successor's gate**, and the successor cannot tell a duplicate
+fire from a missed window — the exact confusion the gate exists to prevent.
+
+- **(a) verify a stamp by the field the reader uses, not the field the writer
+  emits.** A file that parses and validates clean can still be unreadable to the
+  control that consumes it. `WRITTEN CLEAN` is the writer talking about clamping;
+  it is not a claim that the gate can see the entry.
+- **(b) the two probes that mattered here are cheap and general:** read the file
+  back and check the field the *next* run will read, and supply a **forward**
+  stamp in a throwaway probe to prove the writer clamps rather than trusts. A
+  probe using only a past stamp cannot distinguish "preserved" from "clamped" —
+  that fixture cannot fail.
+- **(c)** a gap in the series caused by an unreadable field looks exactly like a
+  quiet period. Both read as "nothing new"; only one is a defect.
+
+### 1b. A PROBE THAT SEARCHES A PREFIX reports its own window as an absent field
+
+Measured 2026-10-03 (finch:work #1134). A verification probe checked the four
+stamp fields of a fresh journal entry with a regex over `read()[:2000]` and
+printed `completed_at ABSENT, as_of ABSENT, timestamp ABSENT, started_at
+ABSENT` — every field "missing", which reads as a clean and alarming finding.
+`json.loads` on the whole file shows 10 top-level keys and a valid `timestamp`
+at `05:37:46`, written **last**. The byte window, not the document, decided the
+answer.
+
+- **(a) a probe must PARSE the document it claims to inspect.** Coverage should be
+  the document's own structure, never a byte offset chosen before the document's
+  length is known. Write `json.loads(open(p).read())` and then look up keys.
+- **(b) "absent" and "not reached" must print differently.** When a search can
+  fail to reach its target, the output says so; a probe that reports its own
+  incompleteness as a property of the world is the same failure as the stale
+  `find` window in section 2 below, at a different layer.
+- **(c) a control is what separates the two.** The one-line check that did it here
+  was printing the file's byte length and its key count: 9,240 bytes and 10 keys
+  cannot be an empty document. Cheap, and it fails if the probe is wrong.
+
+Three probe defects landed in that one pass, and all three produced output that
+read as a finding about the host: a `%`-format verb inside a `%`-formatted string
+(the trap section 3a already records, hit again), a misplaced paren binding
+`.mtime` to a string literal, and this prefix search. None were host defects. A
+probe is an instrument, and its output is a claim about the world made from an
+instrument — so a probe's own limits get the same treatment as a guard's
+coverage: enumerate the sibling shape it cannot see before quoting its zero.
+
 ## 2. Close the ledger's own clock before and after writing
 
 `python3 scripts/finch_ledger_guard.py` (`--repair` to fix, `--json` for the
@@ -185,7 +240,44 @@ that agree.
   caught in the first implementation.
 
 
-## 3. Allocate the scan NUMBER, don't compute it
+### 3a. A DOCUMENTED repair path that was never wired up (finch:scan #1126, 2026-10-02)
+
+Section 2 already said the rule — *"route the **repair** path through the same
+resolver too, otherwise the guard can see a stamp `--repair` cannot clear"* —
+and `finch_ledger_guard.py` implemented it: `NESTED_HEADER_FIELDS =
+('last_scan.at',)` exists precisely because the header records one instant twice.
+`finch_ledger_write.py clamp()` was never widened to match. It walked
+`guard.HEADER_FIELDS` and `guard.TASK_FIELDS`, so:
+
+- `--doc` clamped 7 flat stamps and silently left the nested one;
+- `--clamp-only` then printed **`clamped 0 (every stamp is at or before now)`**
+  on a ledger the guard was *simultaneously* flagging `VERDICT 1 FORWARD`.
+
+That is a documented lesson that had been recorded and not built, and the
+signature to recognise it is a repair tool reporting **zero changes** while a
+verdict it exists to clear is live. Zero is what a passing clamp looks like.
+Fixed by walking the dotted paths explicitly, leaving a missing/non-dict
+intermediate alone; `test_finch_ledger_write.py` 32/32 after.
+
+**A prose lesson in this file is not a code path in the script.** Two files in
+one skill can disagree for months, and the document is the one that gets
+re-read, so it accrues authority the code never earned.
+
+### Never hand-write an instant in an apply script — take the clock AT WRITE TIME
+
+Scan #1126 spent this rule's cost in the same pass: its apply script set
+`NOW = '2026-10-02T23:30:00Z'` by hand against a real clock reading 23:28:57Z,
+which manufactured a forward stamp the guard caught three times at +62.6s then
++34.9s. It resolved on its own when wall time passed the invented instant — and
+the guard called the result **LAUNDERED**, which is precisely the failure mode
+that records itself as a pass. The only cure is to derive the clock where the
+write happens, so there is no instant in the model's output to be wrong.
+
+The next paragraph's rule has a second identity worth keeping separate: the
+scan counter guards against two passes minting one *number*, not against a bad
+*clock*.
+
+### 3. Allocate the scan NUMBER, don't compute it
 
 The counter had the same class of bug as the guard and stayed unfixed until
 2026-09-27. Never write `scan_number = header + 1`: that field is a plain
@@ -261,6 +353,72 @@ silently scans nothing. Counting "self-stamps in the last 6 days" returned
 **0** while an independent whole-tree sweep returned 63. It read as clean
 because zero forward stamps is what a passing check looks like. **Any tally
 over a time window must print the number of files it actually iterated.**
+
+## 4a. A MERGED SERIES hides a rename as a disappearance (2026-10-02, #1111)
+
+`email-wealthfront-routing-number-cutover-oct1` carried, unverified for two days,
+"the cash-account statement class stopped after 2026-09-17." It did not stop. Two
+subject templates of ONE monthly event had been counted as a single series:
+
+| era | subject | span | rows | median gap |
+|---|---|---|---|---|
+| old | `Your monthly Cash Account statement from Green Dot Bank is available` | 2020-10-17..2025-06-17 | 57 | 30.99d |
+| new | `Your monthly Green Dot statement is available for your Individual Cash Account` | 2025-08-17..2026-09-17 | 14 | 31.04d |
+
+Merged (71 rows) the gap distribution is **bimodal** and its median (15.04d)
+belongs to neither era. Split, both medians are ~31d, the newest hit is the new
+era's own latest, and the cadence was never broken. The "last" 2026-09-17 row
+that made the series look finished was the new template arriving on time.
+
+- **(a) before reporting an event class as stopped, split it by any
+  discriminator that is not the one you are measuring by** — here, the subject
+  template. A merged series manufactures a gap distribution that describes
+  neither population, and a cadence rule over it fires on a healthy signal.
+- **(b) a vendor's subject text is not an identity.** Match such a class by a
+  STABLE STEM, exclude adjacent classes by an explicit NEGATIVE match (the
+  brokerage statement interleaves around the 3rd-7th and 17th), and REPORT
+  `templates_seen` so the next rename appears as a third template rather than as
+  an absence. A keyword watcher scoped to one era is silent on the other era and
+  reports it as a cessation — the blind spot is invisible precisely because the
+  matcher still returns matches.
+- **(c) "stopped" and "renamed" are indistinguishable from inside a single
+  keyword.** Leaving the question UNVERIFIED was correct; leaving it at "the
+  count dropped" was not. A finding parked as unresolved must carry the specific
+  measurement that would resolve it.
+
+### The 500-row ceiling is a measurement cap, not a sample
+
+The first statement probe queried `from:wealthfront.com` and got exactly 500
+rows with `at_max_results_ceiling: true`. Paging to exhaustion gave **780**. The
+280 hidden rows included the entire older template era's tail, so the capped
+query could not have seen the rename at all. **Always page a corpus you intend
+to characterise, and print the page count next to the row count.**
+
+### A count is not a series, and the diff must be inside the shape
+
+The two probes used to corroborate ("subject without sender", "no sender") were
+independently worded and **disagreed by 15 months** — a warning that the corpus
+was being partitioned, not a measurement. The settled numbers (780 / 71 / 57 / 14)
+come from one paged pull with a template discriminator, reported as counts *and*
+spans together.
+
+## 4b. A MUTANT THAT CHANGES NOTHING kills nothing (2026-10-02, #1111)
+
+The drift guard was mutation-tested and the first mutant **SURVIVED**. It was not
+a green result: it narrowed `STATEMENT_RE` only, but the predicate is an `or` of
+two regexes and `STATEMENT_ACCOUNT_RE` still matched the new template on its own,
+so the mutant never changed the behaviour under test.
+
+- **(a) assert that a mutation APPLIED something before reading its verdict.**
+  `mutant != source` is one line and catches the whole class. "The mutant
+  survived" and "the mutation was a no-op" look identical from the exit code.
+- **(b) reproduce the defect, not a neighbour of it.** The real #1107 error was
+  scoping to the old template in BOTH regexes; the second mutant did that and
+  turned the suite red at `test_both_template_eras_match`.
+- **(c) run the mutation in a COPY and compare inode/device, not path.** A
+  harness that mutates the live object to test a guard on that object destroys
+  the thing it is measuring; `st_ino`/`st_dev` equality proves the original was
+  not the thing that got tested.
 
 ## 5. A suite that asserts on MAGNITUDE only is blind to the SIGN
 
@@ -361,8 +519,43 @@ script. Verifying a fix on a copy tests the copy.
   symptom clears.
 - **(d)** a printed skip-reason must be derived from a measurement of the
   condition it names, not from a proxy that happens to correlate.
-- **(e)** a repo gate's own literal test fixtures are shipping content. The
+- **(e) a repo gate's own literal test fixtures are shipping content.** The
   new direction needed an address-shaped string; written literally it tripped
-  the very gate being tested, and the fix was to build the literal at runtime
-  — the convention the adjacent token test already used. A test for a leak
+  the very gate being tested, and the fix was to build the literal at runtime —
+  the convention the adjacent token test already used. A test for a leak
   detector that leaks is a self-inflicted false green.
+
+## 7. An EMPTY schema is not an empty store, and a journalled result is not a file
+
+Both measured in the same 2026-10-01 pass, and both are the same shape: a
+zero that reads like a clean result.
+
+**The empty schema.** `state_fresh.db` has the full `sessions`/`messages`
+schema and **0 rows**. A query against it returns an empty set, which is
+byte-for-byte what "no interactive sessions in the window" looks like. The real
+store is `state.db` (measured: 2129 sessions / 96015 messages). Had the window
+been read from the first file, this pass would have reported **zero signals
+across zero sessions** — a complete, confident, wrong mining result.
+
+- **(a) a count must name the population it iterated.** Print the table's total
+  row count alongside the windowed query, and treat rows-in-schema-but-0-rows
+  as a store that was never written to.
+- **(b)** a "no signal" verdict is the finding that most needs a positive
+  control: re-run it against a store known to hold data.
+
+**The unwritten result.** The 13:26Z daily recorded
+`chars_before 2130 -> chars_after 1510` with an `applied` count, while
+MEMORY.md's mtime was ~30h older than the claim and the file measured 2130
+before *and* after. `memory_guard.py --json` returned `idempotent_noop: true`,
+`evicted: []` — so the claimed result was **not achievable by the sanctioned
+writer** at all; the record described an outcome the only permitted path cannot
+produce.
+
+- **(c) verify a reported result against the artifact in the same pass that
+  reports it.** The journal read clean and would have stayed clean.
+- **(d)** where a workflow has a sanctioned writer, a hand-typed result field is
+  an assertion the system cannot check. Make the writer the only path that can
+  set it, or the field will eventually record an outcome nothing performed.
+- **(e) a claim describing an impossible outcome is stronger evidence of a
+  reporting defect than of a transient error** — it rules out "the write ran and
+  was later reverted." The write never ran.

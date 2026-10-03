@@ -138,6 +138,51 @@ Two defects in the SAME watcher, found on one pass (`scripts/ucsf_mychart_invite
 
 **Long task fields cannot go through `finch_ledger_write.py --set` on a shell command line — drive the writer's functions in-process instead.** Same pass. `--set` parses `key=value`, and a `re_verify_trigger` / `blocked_reason` / `signal` of 500-800 characters containing quotes, colons, semicolons and `=` is exactly the value that gets silently truncated. Import the module and call its own `clamp()` + `write_atomic()` + `guard.check()` so the clamp and the from-disk re-measure still happen — the choke point's value is that no forward stamp can pass through it, and bypassing it with a hand-rolled `json.dump` gives that up. Note also that a nested `$(python3 -c ...)` inside `--set` is refused by the cron security scanner ("nested executable body could not be resolved"), so the substitution workaround is not available either.
 
+### A number in user-facing output is UNQUOTABLE until it names its population (confirmed finch:work 1067, 2026-10-01)
+
+A summary email quoted '302 duplicate fires across 20 jobs'; the operator refuted
+both. The structural cause was a **proxy**: the counts came from listing
+`cron/output/<job>/`, which counts `.gz` archives, pre-repair history, and jobs
+with zero executions. A proxy is not a count, and nothing in the output said which
+one had been used.
+
+Two rules, now enforced by `scripts/finch_count_population_guard.py`:
+
+1. **Name the population with every count.** `cron/executions.db` is a sliding
+   window pruned to the newest terminal rows. So "N duplicate fires" is
+   unfalsifiable and drifts every pass. The honest form names the population:
+   "330 duplicate instants over the newest 976 terminal rows spanning 6.7h."
+2. **Corroborate with an independently-worded query for the SAME predicate.**
+   Not a *different* metric — a second wording of the same question.
+
+**Point 2 is where this pass nearly shipped its own version of the defect.** The
+guard's corroboration was a `finished_at` cluster — same job, identical finish
+microsecond — which is a genuinely **different predicate**, and it returned 0
+against construction A's 330, so the script reported `VERDICT: CORRECTION`, exit
+1: a confident, well-formatted, wrong number produced by the very class of error
+the script exists to catch. Two metrics disagreeing is not corroboration failing;
+it is a different question being asked. The corroborating construction was a
+self-join on the same `(job_id, scheduled_instant)` key. The mis-worded
+construction is retained in the script as
+`DIAGNOSTIC_same_finished_at_rows`, reported and explicitly never used to
+corroborate.
+
+**The mutation harness caught my own bad mutant, and that is the reusable part.**
+`scripts/test_count_population_guard_mutation.py` refuses to report a pass when a
+mutant's pattern no longer applies (exit 2, "mutant is stale") rather than
+counting it as killed. First run: `M1_bare_count_no_population` **SURVIVED** —
+not a suite gap but a mutant that only re-indented the line, leaving output
+byte-identical. A mutant that does not change behaviour cannot kill anything, and
+a harness that treats "applied nothing" as "passed" would have reported 2/3 and
+hidden that. The suite went 7/7 green against the real scheduler while all three
+mutants were killed — that pairing, not the green, is the evidence.
+
+Also measured this pass and previously unreported: **24 `status='unknown'` rows**
+in `executions.db`, all with `started_at=None` and error "Scheduler restarted
+after this execution's owner exited before a durable…", across distinct job ids,
+one timestamp. No task in the 203-row ledger mentions the status. Reported, not
+interpreted — it is somebody else's signal to classify.
+
 ### Constructive progress while blocked (work execution)
 
 When a task is blocked on an external party (<operator> login, third-party OAuth, a human decision) but has an the agent-owned executable sub-component, **build that component now** rather than re-verifying the block. This converts a no-op check into durable, reusable tooling.
@@ -237,7 +282,45 @@ When finch:scan flags a cron `last_status=error` with a Python traceback message
 3. If verified, COMMIT the fix (the fix file only; leave unrelated working-tree modifications uncommitted — they belong to other tasks). An uncommitted patch is fragile under cron: these repos carry many local commits ahead of upstream and get rebased/pulled, which discards or conflicts uncommitted changes, so the next scheduled tick would crash again. Committing makes it durable.
 4. Clean verification side-effects: running `main()` appends a row to any append-only log it writes — dedupe to one deterministic row per key (e.g. per date; for mixed-type logs key on `(decision_type, date)`) so the data stays honest.
 
-#### Verify the ACTUAL cron target path before patching (confirmed 2026-07-26 finch:work)
+**A green test suite validates the copy it sits next to — which is not always the copy you patched (confirmed finch:work #1091, 2026-10-02)**
+
+The named suites and the instrument are not always in the same directory, and the
+divergence is silent because both copies import fine and both answer `--help`.
+
+Measured: `~/.hermes/profiles/<profile>/skills/ocas-finch/scripts/finch_disk_watch.py`
+(md5 `eca47ec6…`, 39,722 B) versus `~/projects/github-staging/finch/scripts/finch_disk_watch.py`
+(md5 `f108da93…`, 43,354 B). 38 tests went green against the *skill* copy while the
+change under test sat in the *repo* copy — reported as a regression check, having
+checked nothing. The suite resolves the script as `os.path.join(os.path.dirname(__file__), "finch_disk_watch.py")`,
+so **running a suite from a different directory silently retargets it**.
+
+- **(a) resolve the suite's target before trusting its verdict** — read the `SCRIPT =` line,
+  `md5sum` both paths, and run the suite with its target path asserted to be the file you edited.
+- **(b) `git status` after staging test files.** This pass copied suites into the repo to run them there;
+  had they differed by a version they would have silently overwritten tracked tests. `git status --short`
+  showed only the intended modification, which is what proved nothing was clobbered.
+- **(c) copy a green result across directories only once the object identity is checked**, for the same
+  reason #1031 recorded a live script beside a 5-day-stale copy: a pass that "confirms" the stale one
+  reports a false zero that reads exactly like a clean result.
+
+**A progress TRACKER scored as a COMPLETION SIGNAL reports done forever (confirmed 2026-10-02, `wealthfront_cutover_watch.py`).** A recurring vendor notice named a count of outstanding items — 12 -> 3 -> 2 -> 1 -> 2 -> 1 -> 1 -> 2 — while the recipient fixed them incrementally over 119 days. The task's own `re_verify_trigger` named "the count dropped" as the completion signal. Scored literally, the series contains THREE drops, so the watcher returned `CUTOVER_COMPLETE` / exit 0 on the live mailbox: green on an open payments incident, and it would have returned green on every future run, because the sawtooth is permanent history. The signal was never wrong; the *question* changes at the deadline. Before it the count answers "is the recipient making progress"; after it, the vendor has actually attempted the transactions and a fall answers "did the retries succeed". Same number, different meaning, which is why the deadline has to gate it.
+
+Two general rules:
+- **(a) gate a threshold rule on a phase, not on the value alone.** One predicate, two eras. When a metric is a live tracker rather than a monotone state, ask what the number *means* on each side of the boundary, and read movement across the boundary only as evidence.
+- **(b) fixture a permanent sawtooth before trusting any drop/detect rule over real history.** The replay is one call — feed `classify()` the actual recorded series — and it found a defect that 16 fixture rows written from the pattern never would. Replaying real history through a new classifier is cheap and catches the class outright.
+
+The adjacent trap, same pass: **a metadata-format Gmail row carries headers as TOP-LEVEL keys, not a `headers[]` list.** Reading `row["headers"]` yields `[]`, every subject comes back empty, the subject regex matches nothing, and the watcher reports a clean mailbox at exit 0 over a series of eight — the vacuous-negative class documented for the UCSF watcher, reached again through a different door because the fixture set was the pattern. `gws_direct_puller.py` emits the flat shape (`date`/`from`/`subject` at top level) while `messages.get(format=full)` returns `payload.headers[]`; a watcher that consumes one and reads the other silently sees nothing. Assert the shape rather than assuming it, and include the real NON-matching subjects from that sender's window so the miss direction is covered, not only the match direction.
+
+**A wrong assertion is not a reason to re-run the write (same pass).** Post-write verification flagged
+`re_verify_trigger written: FAIL`; the field HAD been written — the assertion tested for a substring the
+new text legitimately omitted. Re-running the writer would have appended a **second** `work_log` entry for
+one pass. Verify against a **fresh read from disk** with assertions that describe the intended content,
+and check for duplicate entries (`sum(1 for e in work_log if "<this pass>" in e) == 1`) before concluding
+anything needs rewriting.
+
+**An instrument that anchors on the OLDEST sample and prunes to a retention window destroys its own evidence (same pass).** `_prune_samples` drops samples older than `_retention_h()`; `main()` anchors on `samples[0]`. The two windows differ by the write gap, so on any job not running continuously the anchor is already outside retention when the run finishes. The run publishes a rate and deletes the sample that rate rests on — and because the ring is then a *different* window, it can read the **opposite sign** (-1,086.5 vs a published +905.0 MB/24h), so a reader cannot adjudicate the headline against the ring. `growth_measured` cannot see it: it asserts only that an anchor existed. The reachable anchor age is bounded by `retention + write gap`, which is a property of the **schedule**, not the host — measure the ceiling before writing a threshold rule, or the rule abstains forever.
+
+**Verify the ACTUAL cron target path before patching (confirmed 2026-07-26 finch:work)**
 
 A task description that names a script (e.g. "fix praxis_review.py") is a hint, NOT an authoritative pointer. Multiple copies of the same script can exist across repos, and only ONE is the live cron target. Patching the wrong copy wastes a cycle and leaves the real defect live.
 
