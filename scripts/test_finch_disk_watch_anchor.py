@@ -16,6 +16,7 @@ numbers rather than to ones chosen to suit the assertion.
 """
 import os
 import sys
+import time as _real_time
 import time
 import json
 import re
@@ -24,6 +25,33 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import finch_disk_watch as dw  # noqa: E402
+
+
+class _FrozenClock:
+    """A `time` stand-in that never advances.
+
+    Any test that drives main() against a ring whose samples are pinned to a
+    fixed epoch must install this. main() reads time.time() to choose the
+    anchor and save_baseline() reads it again to prune against
+    _retention_h(), so a live clock silently deletes any fixture older than
+    retention and the test then asserts on a ring that no longer exists.
+    save_baseline() also stamps `iso` through time.strftime/gmtime.
+    """
+
+    def __init__(self, instant):
+        self._t = float(instant)
+
+    def time(self):
+        return self._t
+
+    def strftime(self, fmt, t=None):
+        return _real_time.strftime(fmt, t if t is not None else self._t)
+
+    def gmtime(self, t=None):
+        return _real_time.gmtime(t if t is not None else self._t)
+
+    def __getattr__(self, name):
+        return getattr(_real_time, name)
 
 # The real 2026-10-01 ring, read from state/disk_watch_baseline.json at
 # 20:42:47Z. Times are expressed as hours-before-now so the test is not pinned
@@ -336,8 +364,154 @@ class TestAnchorSurvivesItsOwnWrite(unittest.TestCase):
     """
 
     def _anchor_kept(self, anchor_ts, now):
-        """Mirror of the published field, driven off the module's own retention."""
+        """Mirror of the published field, driven off the module's own retention.
+
+        DEPRECATED as an oracle for the shipped field -- see
+        `test_field_reads_the_written_ring_not_a_stale_clock` below. Kept only
+        because it still expresses the retention RULE, which remains true.
+        """
         return bool(anchor_ts >= now - dw._retention_h() * 3600.0)
+
+    def _run_with_clock(self, base_path, clock):
+        """Drive main() with the baseline redirected and time under control.
+
+        main() takes no arguments and RETURNS NOTHING -- with --json it prints
+        and returns None -- so the report is read back off stdout, not off a
+        return value. And the baseline is redirected by patching the function
+        that resolves it (`_baseline_path`), because the module resolves the
+        path per call rather than storing a module-level constant.
+
+        `clock` replaces `dw.time` so the two instants the defect depends on --
+        the pre-write `now` used to CHOOSE the anchor and the post-write
+        time.time() used to PRUNE -- can be separated deterministically instead
+        of by sleeping.
+        """
+        import io
+        import contextlib
+        orig_argv = sys.argv
+        orig_time = dw.time
+        sys.argv = ["finch_disk_watch.py", "--json"]
+        buf = io.StringIO()
+        try:
+            dw._baseline_path = lambda: base_path
+            dw.time = clock
+            with contextlib.redirect_stdout(buf):
+                dw.main()
+        finally:
+            dw.time = orig_time
+            sys.argv = orig_argv
+        return json.loads(buf.getvalue())
+
+    class _Clock:
+        """The first call is the pre-write instant; later calls advance.
+
+        main() reads time.time() once to pick the anchor, then save_baseline()
+        reads it again to prune. Returning a later value on the second and
+        subsequent calls reproduces the real gap between the two without a
+        wall-clock sleep.
+        """
+
+        def __init__(self, start, later, stride=1.0):
+            self._t = start
+            self._later = later
+            self._stride = stride
+
+        def time(self):
+            val, self._t = self._t, self._t + self._stride
+            return val
+
+        # save_baseline() also stamps the sample's iso field through these.
+        def strftime(self, fmt, t=None):
+            return _real_time.strftime(fmt, t if t is not None else self._t)
+
+        def gmtime(self, t=None):
+            return _real_time.gmtime(t if t is not None else self._t)
+
+        def __getattr__(self, name):
+            return getattr(_real_time, name)
+
+    def _write_fixture(self, base, now, anchor_ts, newest_ts):
+        with open(base, "w") as fh:
+            json.dump({
+                "used_mb": 70000.0, "pct": 71.3,
+                "ts": anchor_ts, "iso": "fixture-anchor",
+                "samples": [
+                    {"used_mb": 70000.0, "pct": 71.3, "ts": anchor_ts,
+                     "iso": "fixture-anchor"},
+                    {"used_mb": 70050.0, "pct": 71.4, "ts": newest_ts,
+                     "iso": "fixture-newest"},
+                ],
+                "retention_hours": dw._retention_h(),
+            }, fh)
+
+    def test_field_reads_the_written_ring_not_a_stale_clock(self):
+        """The shipped field must be FALSE when the write deleted its anchor.
+
+        Measured 2026-10-02 (finch:work #1125). The field
+        `growth_anchor_retained_after_write` re-derived survival from the clock
+        captured when the anchor was CHOSEN, while the prune that actually
+        removed the sample ran inside save_baseline() at a LATER time.time().
+        A run whose anchor sat within its own report-construction time of the
+        boundary published TRUE for an anchor it had just deleted. Live
+        measurement: anchor 78,456.2 MB @ 19:04:14Z, margin under retention at
+        eval time 91 s, report build 92 s, prune cutoff 19:04:15Z -- the anchor
+        is 1 s before the cutoff and ABSENT from the ring on disk.
+
+        This drives main() end to end rather than re-implementing the
+        predicate, because the defect WAS the mismatch between the two: a
+        mirror test asserts the rule is right while the shipped code is wrong,
+        and `_anchor_kept` above is precisely such a test -- it passed against
+        the broken expression for its entire life.
+        """
+        now = _real_time.time()
+        ret = dw._retention_h() * 3600.0
+        base = os.path.join(tempfile.mkdtemp(), "disk_watch_baseline.json")
+
+        # Anchor 2 s inside retention by the PRE-WRITE clock, then the clock
+        # jumps 300 s -- the report-build gap. 2 < 300 is the whole defect.
+        self._write_fixture(base, now, now - ret + 2.0, now - 0.05)
+        clock = self._Clock(now, now + 300.0, stride=300.0)
+        rep = self._run_with_clock(base, clock)
+
+        on_disk = json.load(open(base))["samples"]
+        anchor_survived = any(
+            abs(float(s["used_mb"]) - 70000.0) < 0.5 for s in on_disk
+        )
+        field = rep["growth_anchor_retained_after_write"]
+
+        self.assertFalse(
+            anchor_survived,
+            "fixture is wrong: the write kept the anchor, so it cannot "
+            "exercise a false TRUE",
+        )
+        self.assertIs(
+            field, False,
+            "the field published %r for an anchor the same run deleted from "
+            "the ring -- it re-derived survival from the pre-write clock "
+            "instead of reading the written payload" % (field,),
+        )
+
+    def test_field_is_true_when_the_anchor_actually_survived(self):
+        """The same field must still say TRUE on the ordinary case.
+
+        A fix that always answers False is not a fix; it moves the false
+        negative into the other direction. The anchor here sits 900 s inside
+        retention while the clock advances 300 s, so it survives -- and only
+        this distinguishes a correct field from a permanently-False one.
+        """
+        now = _real_time.time()
+        ret = dw._retention_h() * 3600.0
+        base = os.path.join(tempfile.mkdtemp(), "disk_watch_baseline.json")
+
+        self._write_fixture(base, now, now - ret + 900.0, now - 0.05)
+        clock = self._Clock(now, now + 300.0, stride=300.0)
+        rep = self._run_with_clock(base, clock)
+
+        on_disk = json.load(open(base))["samples"]
+        self.assertTrue(any(
+            abs(float(s["used_mb"]) - 70000.0) < 0.5 for s in on_disk
+        ))
+        self.assertIs(rep["growth_anchor_retained_after_write"], True)
 
     def test_anchor_within_retention_survives(self):
         now = time.time()
@@ -372,6 +546,143 @@ class TestAnchorSurvivesItsOwnWrite(unittest.TestCase):
         anchor_age_h = 4.90
         self.assertLessEqual(anchor_age_h, ceiling_h)
         self.assertLess(ceiling_h, 6.0)  # the >=6h rule is unreachable as shipped
+
+
+class TestPostStepResidual(unittest.TestCase):
+    """The rate with the dominant step's INTERVAL removed (#1127).
+
+    The fixture is this pass's real 2026-10-02 ring, so the numbers are pinned
+    to a disk rather than to values chosen to satisfy the assertion. The
+    headline over the full window is +16,219.2 MB/24h (MET); the residual over
+    the same window minus the +2,523.3 MB step's interval is +2,735.7 (UNMET).
+    A suite that only pinned the headline would have been green throughout.
+    """
+
+    NOW = 1790984562.93  # 2026-10-02T23:42:42Z
+
+    def _ring(self):
+        h = 3600.0
+        return [
+            {"ts": self.NOW - 3.974 * h, "used_mb": 78472.6},
+            {"ts": self.NOW - 3.831 * h, "used_mb": 78519.2},
+            {"ts": self.NOW - 3.146 * h, "used_mb": 78341.0},
+            {"ts": self.NOW - 3.033 * h, "used_mb": 78384.2},
+            {"ts": self.NOW - 2.175 * h, "used_mb": 80907.5},  # +2523.3 step
+            {"ts": self.NOW - 1.278 * h, "used_mb": 80901.4},
+            {"ts": self.NOW - 0.640 * h, "used_mb": 81232.3},
+            {"ts": self.NOW - 0.557 * h, "used_mb": 81254.8},
+            {"ts": self.NOW - 0.364 * h, "used_mb": 81320.0},
+            {"ts": self.NOW - 0.279 * h, "used_mb": 81057.8},
+        ]
+
+    def test_residual_is_far_below_a_met_headline(self):
+        cur = 81155.4
+        h = 3600.0
+        ring = self._ring()
+        steps = dw._window_steps(ring + [{"ts": self.NOW, "used_mb": cur}])
+        headline = (cur - ring[0]["used_mb"]) / ((self.NOW - ring[0]["ts"]) / h) * 24.0
+        res = dw._post_step_residual(ring, abs(max(steps, key=abs)), cur, self.NOW)
+        self.assertIsNotNone(res)
+        self.assertGreater(headline, dw.TRIGGER_GROWTH_MB_24H)   # MET
+        self.assertLess(res[0], dw.TRIGGER_GROWTH_MB_24H)          # UNMET
+        # same disk, same window, opposite sides of the trigger
+        self.assertGreater(headline, res[0] * 5)
+
+    def test_residual_window_starts_after_the_step(self):
+        res = dw._post_step_residual(
+            self._ring(), 2523.3, 81155.4, self.NOW)
+        # 11 samples, 10 intervals, step at index 3 -> 7 samples survive
+        self.assertEqual(res[3], 7)
+        self.assertAlmostEqual(res[2], 2.175, places=2)
+        self.assertLess(res[2], 3.974)       # strictly shorter than the headline
+
+    def test_no_step_means_no_residual_rather_than_a_zero(self):
+        # Flat window: biggest is not dominant, so there is nothing to remove.
+        ring = [{"ts": self.NOW - 3 * 3600 + i * 900, "used_mb": 100.0}
+                for i in range(9)]
+        self.assertIsNone(dw._post_step_residual(ring, 0.0, 100.0, self.NOW))
+
+    def test_short_tail_abstains_instead_of_normalising_churn(self):
+        """A step in the FINAL interval leaves two samples, not zero.
+
+        Without the age guard this returns 0.0 MB/24h today and would return a
+        large positive number on a smaller tail -- the same 24h-normalisation
+        artifact that produced #1028's retracted 13,665 MB/24h.
+        """
+        ring = [
+            {"ts": self.NOW - 3 * 3600, "used_mb": 100.0},
+            {"ts": self.NOW - 2 * 3600, "used_mb": 101.0},
+            {"ts": self.NOW - 1 * 3600, "used_mb": 5000.0},
+        ]
+        self.assertIsNone(dw._post_step_residual(ring, 4999.0, 5000.0, self.NOW))
+
+    def test_too_few_samples_returns_none(self):
+        ring = [{"ts": self.NOW - 2 * 3600, "used_mb": 100.0},
+                {"ts": self.NOW - 1 * 3600, "used_mb": 9000.0}]
+        self.assertIsNone(dw._post_step_residual(ring, 8900.0, 9000.0, self.NOW))
+
+    def test_non_dominant_largest_step_still_yields_none(self):
+        """The function re-checks dominance, so a wrong step_mb cannot fool it."""
+        h = 3600.0
+        ring = [{"ts": self.NOW - 4 * h + i * h, "used_mb": 1000.0 + i * 100.0}
+                for i in range(5)]
+        # every step is +100, so no single one dominates; the caller passed a
+        # value implying otherwise
+        res = dw._post_step_residual(ring, 100.0, 1500.0, self.NOW)
+        self.assertIsNone(res)
+
+    def test_residual_does_not_mutate_its_input(self):
+        ring = self._ring()
+        before = json.dumps(ring, sort_keys=True)
+        dw._post_step_residual(ring, 2523.3, 81155.4, self.NOW)
+        self.assertEqual(json.dumps(ring, sort_keys=True), before)
+
+    def test_report_publishes_the_residual_when_the_step_dominates(self):
+        """The field must reach the JSON, not merely exist as a function.
+
+        Both halves of the host state this test depends on must be pinned, not
+        one. (1) The CLOCK: the fixture is pinned to NOW =
+        2026-10-02T23:42:42Z and its oldest sample sits on the 4.0h retention
+        boundary, so a live clock prunes the ring the assertions read -- the
+        +2,523.3 MB step and every sample before it are gone. (2) The READING:
+        main() appends THIS RUN's own used_mb to the window before the step
+        test runs, and that value comes from fs_usage() against the live disk.
+        The fixture's newest sample is 81,057.8 MB while the real filesystem
+        reads ~78,700, so the live reading injects a second ~-2,300 MB step
+        that rivals the fixture's own and the dominance predicate correctly
+        refuses to call either one dominant -- spans_step reads False for a
+        reason that has nothing to do with the residual.
+
+        A fixture that pins the epoch but not the measurement is half a
+        fixture, and the half it left open was this host's disk.
+        """
+        import io
+        import contextlib
+        out = io.StringIO()
+        base = {"samples": self._ring()}
+        cur = 81155.4   # the value this fixture's prose already quotes
+        argv = sys.argv
+        saved = (dw.save_baseline, dw.load_baseline, dw.time, dw.fs_usage)
+        try:
+            dw.load_baseline = lambda path=None: base
+            dw.save_baseline = lambda *a, **k: {"samples": base["samples"]}
+            dw.time = _FrozenClock(self.NOW)
+            dw.fs_usage = lambda: (cur, 98147.9, cur / 98147.9 * 100.0)
+            sys.argv = ["finch_disk_watch.py", "--json"]
+            with contextlib.redirect_stdout(out):
+                dw.main()
+        finally:
+            (dw.save_baseline, dw.load_baseline,
+             dw.time, dw.fs_usage) = saved
+            sys.argv = argv
+        rep = json.loads(out.getvalue())
+        self.assertTrue(rep["growth_window_spans_step"])
+        self.assertAlmostEqual(rep["growth_window_step_mb"], 2523.3, places=1)
+        self.assertIsNotNone(rep["growth_post_step_residual_mb_24h"])
+        self.assertEqual(rep["growth_post_step_residual_samples"], 7)
+        # the whole point: the two disagree about the gate
+        self.assertTrue(rep["growth_met"])
+        self.assertFalse(rep["growth_post_step_residual_met"])
 
 
 if __name__ == "__main__":
