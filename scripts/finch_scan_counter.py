@@ -166,6 +166,23 @@ def evidence(ledger: str | None = None, journals: str | None = None) -> dict:
         doc = json.load(fh)
     ev["ledger_scan_number"] = _parse_int(doc.get("scan_number"))
 
+    # CORRECTION (finch:work #1164, measured 2026-10-04): the ledger header
+    # carries NO `scan_number` key at all -- it carries `scan_cycle`. Measured
+    # on the live ledger: scalar header keys are {as_of, last_scan_at,
+    # last_work_at, scan_count, scan_cycle, total_tasks, updated_at, version,
+    # work_at}; `"scan_number" in doc` is False and doc["scan_cycle"] is 1163
+    # while this line reported ledger_scan_number=None and a floor of 1160.
+    # So the authoritative floor -- the one thing this tool exists to guarantee
+    # -- was blind to the live header and would have re-minted 1161, 1162 and
+    # 1163. `scan_count` (24) is a different counter entirely and must NOT be
+    # used as the floor: taking a max over it is harmless but quoting it as the
+    # scan number is not. Read BOTH keys so the floor survives whichever name
+    # the next writer uses.
+    ledger_cycle = _parse_int(doc.get("scan_cycle"))
+    if ledger_cycle is not None:
+        ev["ledger_scan_number"] = max(
+            v for v in (ev["ledger_scan_number"], ledger_cycle) if v is not None)
+
     for root, _dirs, files in os.walk(journals):
         for name in files:
             if not name.endswith(".json"):
