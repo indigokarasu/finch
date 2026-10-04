@@ -235,6 +235,40 @@ check("no absolute host root in a string literal",
 check("LEDGER resolves to a real file", os.path.isfile(_m.LEDGER), _m.LEDGER)
 check("JOURNALS resolves to a real dir", os.path.isdir(_m.JOURNALS), _m.JOURNALS)
 
+print("8. the LIVE header key name is honoured (regression, finch:work #1164)")
+# Measured 2026-10-04 on the real ledger: the header carries NO `scan_number`
+# key -- it carries `scan_cycle` (1163), alongside as_of, last_scan_at,
+# last_work_at, scan_count, total_tasks, updated_at, version, work_at. Every
+# fixture above writes `scan_number`, which is why 33 green checks could not
+# see that the allocator's authoritative floor read a key the live ledger
+# never has: it reported ledger_scan_number=None, floored at 1160 off journal
+# evidence alone, and would have re-minted 1161-1163. Reproduce that shape
+# here with BOTH key names so the floor cannot regress to one of them.
+with tempfile.TemporaryDirectory() as td:
+    led = os.path.join(td, "led.json")
+    with open(led, "w") as fh:
+        json.dump({"scan_cycle": 1163, "scan_count": 24, "version": 1}, fh)
+    mod = load_counter(LEDGER=led, JOURNALS=td)
+    ev = mod.evidence()
+    check("scan_cycle-only header is read (no scan_number key)",
+          ev["ledger_scan_number"] == 1163,
+          "got %s" % ev["ledger_scan_number"])
+    check("floor covers the live header key",
+          ev["floor"] >= 1163, "floor=%s" % ev["floor"])
+    # both names present, different values -> floor takes the MAX
+    with open(led, "w") as fh:
+        json.dump({"scan_number": 1100, "scan_cycle": 1163}, fh)
+    ev2 = mod.evidence()
+    check("both key names -> floor is the max",
+          ev2["floor"] == 1163, "floor=%s" % ev2["floor"])
+    # scan_count must never be mistaken for the scan number
+    with open(led, "w") as fh:
+        json.dump({"scan_count": 24}, fh)
+    ev3 = mod.evidence()
+    check("scan_count alone is NOT read as the scan number",
+          ev3["ledger_scan_number"] is None,
+          "got %s" % ev3["ledger_scan_number"])
+
 print()
 print("PASS %d / FAIL %d" % (len(PASS), len(FAIL)))
 if FAIL:
