@@ -76,138 +76,45 @@ Job names drift — enumerate the live registry, never a remembered set: `refere
 - Memory at/near capacity: `finch.compact` / `memory_guard.py` — never hand-edit MEMORY.md to dodge the cap; Finch owns compaction.
 - Skill library maintenance: route findings to SKILL.md patches.
 
+### finch:scan checklist
+
+Before each scan, verify the run is actually executing (not a no-op):
+
+- [ ] Enumerate the live job registry from `jobs.json` — never rely on a remembered job-name set (names drift; see `references/manual-run-verification.md`)
+- [ ] Confirm each signal source is reachable before declaring it `degraded:` or `absent` — an unreachable source is a GAP, not a zero
+- [ ] Read `references/scanning-traps.md` and match the trap group for the step you are about to report on
+- [ ] For any count reported as complete: prove the denominator is non-vacuous (see `references/mail-self-reference-and-zero-vacuity.md` for the mail case)
+- [ ] Classify every errored job by fingerprint (`references/scan-error-classification.md`); `consecutive_failures > 0` = real, not transient
+
+**Input → Output example.** A `finch:scan` run reads 7 signal sources (cron health, email, calendar, sessions, Drive, kanban, system) and produces a ledger entry with a `scan_number` (allocated by `finch_scan_counter.py`), a per-source status line, and a routing list of findings. A clean scan writes `scan_number: N` with zero findings; a degraded scan writes `degraded: <source>` alongside the findings it did collect. Never write `0 errors` without first confirming the source answered — a silent source and a clean source differ only in the ledger, and conflating them is the trap `references/scanning-traps.md` exists to prevent.
+
+### finch:work checklist
+
+Before executing any `finch:work` task:
+
+- [ ] Triage the task against `references/work-execution-procedures.md` — is it actionable, resumable, or an anti-pattern?
+- [ ] If the task prescribes a specific fix, read `references/work-prescribed-fix-selfrecovery-guard.md` first — check whether the fix is already self-recovering
+- [ ] If resuming an interrupted investigation, read `references/already-fixed-verification.md` — verify the code already implements the requested fix before writing new code
+- [ ] Decompose multi-failure tasks into distinct root causes (`references/signal-triage-before-fix.md`)
+- [ ] Route each finding to its durable target per `references/file-governance.md`; user-scoped signals go to Chronicle/User Dreaming, never global behavior
+- [ ] After the write, run the relevant test suite and confirm the ledger forward-stamp is clean (`finch_ledger_guard.py`)
+
+## Why these rules hold
+
+- **Never hand-edit MEMORY.md to dodge the cap.** `memory_guard.py` enforces a hard cap (`HERMES_MEMORY_CHAR_LIMIT`, default 2200) and a soft target (`HERMES_MEMORY_SOFT_TARGET`, default 500). Hand-editing bypasses the cap's directive protection and pointer stripping, so a later compaction pass can silently lose the very entries the edit was meant to preserve. Finch owns compaction because only it runs the full tier-routing pipeline (`references/forgetting_curve.md`); a manual edit is a partial compaction that leaves the reinforcement state inconsistent.
+- **All scripts answer `--help` and exit 0 before doing any work.** This is load-bearing, not cosmetic: an audit that probes `--help` must not run a watcher, sweep a mailbox, or create a fixture tree. Three separate suites failed this check and, in one case, an unguarded `--help` created real directories in `/root` on every probe. The guard goes before any measurement, tempdir, subprocess, or write.
+- **Job names drift — enumerate the live registry, never a remembered set.** The cron daemon rewrites scheduler fields (`next_run_at`, `pending_slot`, `fire_claim`) on every fired job, and job names are reassigned across versions. A remembered set goes stale within a week and produces false `degraded:` verdicts.
+- **A zero must be proved non-vacuous before it is quoted.** Finch's own output contains keyword probes that match finch's own mail watchers (see `references/mail-self-reference-and-zero-vacuity.md`). A "0 findings" result is only meaningful if the probe could have matched something.
+
 ## When NOT to Use
 
 - User modeling or relationship adaptation — Chronicle owns durable user evidence and User Dreaming consolidates it; Finch mines agent/system learning signals.
 - Skill evaluation scoring (Mentor), skill creation/architecting (Forge), entity identity resolution (Chronicle tools).
+- Real-time behavioral adaptation — Finch operates on scheduled batches, not live interception; for that use Hermes Agent Hooks (`scripts/finch_hooks_plugin.py`, `references/hermes-hooks-integration.md`).
 
-## Cron-worker shell blocks (Tirith) — adapt, do not retry
-
-Two command shapes are refused in cron context because no user is present to
-approve them, and each costs a full round trip: **nested/heredoc bodies** and
-**pipes into an interpreter**. Write the probe to `cache/scratch/finch_*.py`
-and run it by path; use the CLI's own `gh --jq` filter rather than piping. A
-burst of `rm` also trips a mass-deletion guard, and scratch under
-`cache/scratch/` is pruned automatically, so deleting it is never worth a
-block. **When a command is blocked, change its shape rather than re-issuing a
-variant.** The rest: `references/scanning-traps.md` § Agent toolchain in cron.
-
-**A probe that crashes on one weird input measures nothing — and it usually
-looks like a hang, not a crash.** `find … -printf "%s %p\n"` into
-`subprocess.run(…, text=True)` raised `UnicodeDecodeError` at byte offset
-50,508,059 on a non-UTF8 filename, after 8 minutes of walking the tree. Read
-child stdout as **bytes** and decode with `surrogateescape`, and terminate
-records with `\0` rather than `\n` so a newline inside a filename cannot split
-one record into two. A disk/space attribution that dies mid-walk reports zero
-attribution, which reads exactly like "nothing grew" — the most dangerous
-possible failure for that class of question. Same class: a long-running
-`nohup` walk that exits without writing its output looks identical to one still
-running; check that the output exists *and* the process is gone before
-believing either.
-
-**An identity check must sweep every path it intends to compare, or it reports
-its own incompleteness as a refutation.** Assert identity on `(st_dev,
-st_ino)`, never on a path string: two mounts of one file differ in `st_dev` and
-agree in `st_ino`, so a path check reads as absence while an inode check reads
-as identity. Measured: the same file set is reachable under `/var/lib/docker/
-rootfs/…` and `/var/lib/containerd/…` with **path overlap 0 and inode overlap
-100%** — a path-identity assertion calls that "two disjoint sets" and a reader
-concludes the du double-count is absent when it is real.
-
-**To decide whether a writer is bounded you need an INTERVAL, not two
-point-in-time counts.** Comparing a file count at hour N and hour N+2 cannot
-distinguish a slow-growing pool from a saturated ring buffer, and concluding
-"bounded" from it is the recurring error on the disk task: the pool was declared
-a plateau at 288 MB while it was actually climbing past 400 MB. Sample the
-count across a live interval (census in, census out, count the deletions) and
-record the **oldest file's age** — an oldest-file age younger than the window
-you are calling saturated refutes the plateau on its own.
-
-## Workflow — the core loop
-
-Finch owns its core domain operations; it does NOT own trigger detection,
-session management, or cross-skill orchestration (the calling agent does).
-Interactive invocation presents a two-level menu
-(`references/interactive-menu.md`).
-
-1. **Scan** (`finch:scan`, 2h) — read the 7 sources, update `task-list.json`. Cron health MUST come from the LIVE `jobs.json` (`references/cron-health-validation.md`), never `cronjob list` alone — it hides paused/disabled errors. Re-validate prior tasks both directions: re-open on relapse, resolve on recovery.
-2. **Work** (`finch:work`, 30m) — pick the top pending task, load the governing skill, execute ONE. De-duplicate task IDs first (`references/duplicate-task-detection.md`), then append `[Work log: <timestamp> <summary>]` and set `status: "done"`, `done_at`, `updated_at`.
-3. **Route** — classify scope first. A finding about this user's interaction preferences or their relationship with the agent goes to Chronicle/User Dreaming and MUST NOT become a global MEMORY.md rule or a skill patch. Agent/system-general findings route to MEMORY.md, skill patches, or references; proposed patches stage under `{agent_root}/commons/data/ocas-forge/staged/{skill}/` for `ocas-fellow` before production. Only genuinely system-general rules (priority 0) apply immediately.
-4. **Journal** — every run emits an entry under `{agent_root}/commons/journals/ocas-finch/`. **Do not let the model stamp the journal time**: derive it inside the write path from the real clock and clamp it with the ledger writer's due-date exclusion. Omit `completed_at`/`as_of` from any hand-built journal doc too; supply them and the writer clamps them to its own clock, so the file contradicts your prose.
-
-### Three gates before any write
-
-Rules only — the measurements and the failure behind each are in
-**`references/ledger-and-clock-protocol.md`**, which is also what to read
-before changing any of them.
-
-- **Restored occurrence, or new one?** Compare the newest
-  `daily-*.json`/`scan-*.json` `completed_at` to the clock; inside this job's own
-  period (daily ~24h, scan ~2h) ⇒ **record the duplicate fire and CONVERGE** —
-  re-verify prior claims from disk, mine only the delta, decline every write
-  that would redo completed work. *(A restore re-dispatches an unclaimed
-  occurrence, `last_status` stays `ok`, and the `already running` guard cannot
-  see it: 309 restores in a day across 20+ jobs.)*
-- **Catch-up is a MISSED window only** — newest `daily-*.json` >24h old ⇒ expand
-  the window and note it in the journal. *(It does not cover a restore: a
-  duplicate window reads as a ~0h gap, so every clause passes while the work is
-  redone.)*
-- **A gate run BEFORE the write is not evidence the write was clean.** A pass
-  must re-measure AFTER writing, from disk, and report *that*. Measured
-  2026-10-02 (finch:work #1095): the prior pass listed "pre-write ledger guard
-  EXIT 0 / LEDGER CLEAN" in its own pick rationale and the write it
-  immediately followed left THREE forward stamps (+1947s) on the ledger. The
-  receipts file is the proof, not the prose: `forward_count=0` before the write,
-  `forward_count=3` after it. A guard cited as evidence FOR a pass is a claim
-  about the world made from an instrument; only the post-write re-measure
-  separates "the gate passed" from "the write was clean."
-- **A refusal can be CORRECT and still block the truth from being written.**
-  `finch_tasklist_single_write.py` scans a whole field for the ISO pattern and
-  compares every match to `now()`, so a narrative that QUOTES a forward stamp
-  is indistinguishable from one that ASSERTS one — the pass that diagnosed the
-  defect could not record the diagnosis (#1095 aborted, exit 1, ledger
-  untouched). Prefer a non-ISO rendering of a quoted instant ("02:05:00 UTC",
-  "the same 02:05:00 reading") and say so in the entry: that is a workaround on
-  your own content, not a repair of the tool. The durable fix is positional —
-  only a stamp in a claim-bearing field, or at the LEAD of a narrative, is a
-  pass-time claim, exactly the distinction `clamp_narrative_leads()` already
-  draws in `finch_ledger_write.py`.
-- **A writer that REFORMATS the ledger changes the file size without changing
-  the data** — and a shrinking byte count is the #1058 record-loss signature.
-  Measured #1095: the sanctioned single-shot writer emitted `indent=1` while
-  the file on disk was `indent=2`, for −1,363 bytes on a write that ADDED a
-  work_log entry. Do not adjudicate a delta by size. Verify record IDENTITY
-  against a pre-write backup: task-id and scan_note-id sets and ORDER, plus
-  per-task `work_log` lengths. Zero lost records plus a reindent is a clean
-  write; a byte delta alone proves nothing either way.
-- **Close the ledger's clock before AND after writing:**
-  `python3 scripts/finch_ledger_guard.py` (`--repair`; `--json` for the
-  `*_measured` flags) — no timestamp in `task-list.json` may be later than the
-  file's own mtime. Exit 0 clean / 1 forward / 2 unreadable, and **2 is never
-  clean**; read the VERDICT line, not the exit. *(A forward stamp is a P1
-  finding, not a scan note.)*
-
-**Allocate the scan NUMBER, don't compute it.** Call
-`python3 scripts/finch_scan_counter.py` FIRST and use what it prints; it
-flocks, floors on header/journals/prose/sidecar, and **burns** the number before
-you write. Never write `scan_number = header + 1` — a hand-edited number with no
-lock, so two overlapping passes mint the same one (observed: two files both 174
-with the header at 173). Hand-adjudicated collisions get `scan_number_suffix`,
-which the guard excludes from the series.
-
-**Scanning traps**: 43 dated traps grouped by the step they bite at, in `references/scanning-traps.md` — read the one group matching what you are about to do, not the file. The gates above and the cron-health rule in step 1 are the ones that bite most often. Per-source mechanics: `references/scanning-gotchas.md`, `references/finch-scan-pitfalls.md`.
-
-**Task selection priority:** `action_required: true` first; then high > medium > low; then earliest due; `pending` before `in_progress`. Skip `action_required: false` + `in_progress` (events in flight). Nothing actionable → validate and close the top pending item.
-
-**Work-execution rules** (details in `references/work-execution-procedures.md`): triage signal (real / stale / transient); actionability filter (unattended cron); pipeline resumption from the ledger; break repeated check-and-close loops; prescribed fixes may be wrong — verify self-recovery / fail-loud guards first (`references/work-prescribed-fix-selfrecovery-guard.md`).
-
-**Mining frameworks** (`references/mining_methodology.md`): scope before transfer. User-scoped relationship corrections route to Chronicle/User Dreaming; only agent/system-general signals continue through Finch. For those, tag failures by phase — **Planning** → patch preconditions; **Execution** → patch gotchas; **Response** → patch output sections. Record corrections as `[CORRECTION] What / Why / When` so lessons transfer.
-
-## Storage & behavioral directives
-
-Writes MEMORY.md **only** via `scripts/memory_guard.py` (`--apply --file ~/.hermes/profiles/<profile>/memories/MEMORY.md`); Finch is the sole maintainer and a `pre_tool_call` hook blocks the built-in `memory` tool. MEMORY.md is Tier 1 only — no pointers, ~500 chars when compacted; consolidate duplicate directives keeping the specific phrasing and both dates. After any write, re-read and grep a unique substring per intended block: a journal's `applied` count is not proof of persistence. Layout → `references/storage-layout.md`; signal types → `references/signal-types-table.md`.
-
-A user "Always"/"Never" is a **priority-0** rule only when it is genuinely system-general: apply immediately, route to MEMORY.md under `## Always Rules`/`## Never Rules`, never batch with lower-priority findings. User-scoped directives route to Chronicle/User Dreaming and MUST NOT become global rules.
+See `references/cron_worker_shell_blocks_tirith_adapt_do_not_retry.md` for details.
+See `references/workflow_the_core_loop.md` for details.
+See `references/storage_behavioral_directives.md` for details.
 
 ## Failure modes & error handling
 
@@ -219,16 +126,7 @@ A user "Always"/"Never" is a **priority-0** rule only when it is genuinely syste
 | Signal source down | Degraded mode: continue with remaining inputs, log `degraded: <source>`. |
 | Memory write rejected | `finch.compact` / `memory_guard.py` — never hand-edit to dodge the cap. |
 
-## Manual run, commands, recovery
-
-"Run finch" = verify ALL deployed jobs are healthy and force runs where needed. Force an LLM job by **pausing, then running**; `no_agent` jobs run directly. A queued run is not a completed run — confirm `last_run_at` advanced. Job set, verification gate, 401 triage, cron-rebase breakage: `references/manual-run-verification.md`.
-
-Commands: `finch.run` (full pipeline) · `finch.mine` (signals only) · `finch.compact` (MEMORY.md) · `finch.route` · `finch.dry-run` (no changes) · `finch.status` · `finch.scan` · `finch.work`.
-
-**Recovery**: every run writes `evidence.jsonl` (no-ops included); a gap beyond cadence logs `gap_detected` and triggers a remedial pass. Missing Chronicle signals → continue; missing session store → log `degraded: session_store`, skip mining. Log compaction: no-op >30d, error/gap >90d; last 7 days retained.
-
-**Review**: OKRs at `finch:weekly` → `references/okrs.md`; 10 anti-patterns → `references/anti-patterns.md`. Active-review principle → `references/active-review.md`: no signal found is a missed learning — patch the skill in play, don't create a narrow new one.
-
+See references/manual_run_commands_recovery.md for details.
 ## Support file map
 
 Steering entries only — every other file is in `references/finch-support-map.md`.
