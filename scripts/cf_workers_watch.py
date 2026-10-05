@@ -174,9 +174,15 @@ def main():
             "Post-reset burst signature present -> the 100k/day consumer is an "
             "automated sweep/retry client, not human traffic. $5/mo Workers Paid "
             "(10M req/mo) is ~%.0fx the estimated load and is the correct fix if "
-            "the consumer cannot be located. Locating it requires a Cloudflare API "
-            "token on this box (dash.cloudflare.com -> account -> API Tokens); "
-            "no token is present, so the sweep cannot be attributed from the VPS."
+            "the consumer cannot be located. To attribute it, enumerate the "
+            "account's worker scripts with a Cloudflare API token "
+            "(secrets/cloudflare_api_token) -- one REST call, "
+            "GET /accounts/<id>/workers/scripts. NOTE: a script list names the "
+            "consumer but does NOT by itself explain 100k/day, because the "
+            "per-script request breakdown is only in the GraphQL "
+            "workersInvocationsAdaptive* fields, which this token cannot read "
+            "(field unknown to the schema) -- treat the breakdown as NOT "
+            "MEASURED until a token with Workers Analytics read scope arrives."
             % (10_000_000 / max(est_req_per_30d, 1))),
     }
     print(json.dumps(out, indent=2, default=str))
