@@ -263,6 +263,22 @@ intermediate alone; `test_finch_ledger_write.py` 32/32 after.
 one skill can disagree for months, and the document is the one that gets
 re-read, so it accrues authority the code never earned.
 
+### A header --set with a dict literal FLATTENS the nested key (2026-10-07, #1209)
+
+`finch_ledger_write.py --set "last_scan={'at':...,'cycle':...}"` does not nest.
+It writes the header as a **flat key** `last_scan` plus literal dotted keys
+(`last_scan.at`, `last_scan.cycle`, ...) and stores the whole object as a
+**string** in the real `last_scan` slot — the header shape is corrupted, not
+merely mis-stamped. Measured live: a #1209 header update produced
+`last_scan` as a `str` and 8 stray `last_scan.*` keys, caught only by the
+post-write re-read (`TypeError: string indices must be integers`).
+
+- **Set header fields one scalar at a time**, or supply the full document via
+  `--doc`, when a field is itself an object. Do not assume `--set` parses JSON.
+- **Always re-read and assert the nested shape** after a header `--set`; the
+  writer's `VERDICT: WRITTEN CLEAN` only reports clamping, never structure.
+  A clean verdict on a corrupted header is the writer talking about the clock.
+
 ### Never hand-write an instant in an apply script — take the clock AT WRITE TIME
 
 Scan #1126 spent this rule's cost in the same pass: its apply script set
