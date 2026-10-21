@@ -16,6 +16,11 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# --help guard (load-bearing: probe must not run tests or touch state)
+if any(a in ("-h", "--help", "help") for a in sys.argv[1:]):
+    sys.stdout.write((__doc__ or "").strip() + "\n")
+    sys.exit(0)
 import ocas_mailbox as om  # noqa: E402
 
 PASS = FAIL = 0

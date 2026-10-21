@@ -73,6 +73,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "finch_ledger_write.py")
 sys.path.insert(0, HERE)
 
+# --help guard (load-bearing: probe must not run tests or touch state)
+if any(a in ("-h", "--help", "help") for a in sys.argv[1:]):
+    sys.stdout.write((__doc__ or "").strip() + "\n")
+    sys.exit(0)
+
 import finch_ledger_write as W          # noqa: E402
 import finch_ledger_guard as G          # noqa: E402
 
@@ -731,6 +736,41 @@ def main():
     check("the lost record did not land",
           len(json.load(open(led))["tasks"]) == 2,
           str(len(json.load(open(led))["tasks"])))
+
+    print("\\n33. a NEWLY introduced bare-string work_log is REFUSED (exit 7)")
+    doc = base_doc()
+    doc["tasks"][0]["work_log"] = "a bare string entry"
+    staged = os.path.join(tmp, "bare.json")
+    with open(staged, "w") as fh:
+        json.dump(doc, fh)
+    with open(led, "w") as fh:
+        json.dump(base_doc(), fh, indent=2)
+    before = open(led).read()
+    rc, out = cli(["--doc", staged], led, jd)
+    check("refused with exit 7", rc == 7, "exit=%d\n%s" % (rc, out))
+    check("refusal names the class", "bare STRING" in out, out[-300:])
+    check("nothing was written", open(led).read() == before, "the ledger moved")
+    check("the bare string did not land",
+          "a bare string entry" not in open(led).read(), "leaked into the ledger")
+
+    print("\\n34. PRE-EXISTING bare-string debt is reported, not refused")
+    with open(led, "w") as fh:
+        json.dump(doc, fh, indent=2)
+    rc, out = cli(["--clamp-only"], led, jd)
+    check("clamp-only still writes (exit 0)", rc == 0, "exit=%d\n%s" % (rc, out))
+    check("debt reported explicitly", "PRE-EXISTING" in out and "debt" in out,
+          out[:300])
+
+    print("\\n35. --clamp-only does NOT launder a bare string in from a --doc")
+    doc2 = base_doc()
+    doc2["tasks"][0]["work_log"] = "another bare string"
+    staged2 = os.path.join(tmp, "bare2.json")
+    with open(staged2, "w") as fh:
+        json.dump(doc2, fh)
+    rc, out = cli(["--doc", staged2, "--clamp-only"], led, jd)
+    check("clamp-only cannot carry a bare string in", rc == 7, "exit=%d" % rc)
+    check("the bare string did not land",
+          "another bare string" not in open(led).read(), "leaked into the ledger")
 
     print("\n%s" % ("-" * 60))
     if FAILURES:

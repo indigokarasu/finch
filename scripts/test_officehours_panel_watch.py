@@ -9,6 +9,11 @@ from email.utils import format_datetime
 from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# --help guard (load-bearing: probe must not run tests or touch state)
+if any(a in ("-h", "--help", "help") for a in sys.argv[1:]):
+    sys.stdout.write((__doc__ or "").strip() + "\n")
+    sys.exit(0)
 import officehours_panel_watch as w
 
 FAILS = []

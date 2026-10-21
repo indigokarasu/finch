@@ -47,6 +47,7 @@ because a watcher that crashes on import is worse than one that exits 2 with
 a message.
 """
 import os
+import sys
 from pathlib import Path
 
 # The agent's own mailbox is a symlink INTO this directory, so it must never
@@ -119,5 +120,8 @@ def resolve_account() -> str:
 
 
 if __name__ == "__main__":
+    if any(a in ("-h", "--help", "help") for a in sys.argv[1:]):
+        sys.stdout.write((__doc__ or "").strip() + "\n")
+        sys.exit(0)
     acct = resolve_account()
     print(acct or "UNRESOLVED (set $OCAS_OPERATOR_EMAIL)")

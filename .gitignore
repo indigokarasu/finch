@@ -40,11 +40,17 @@ scripts/test_block_ledger_hook.sh
 scripts/chronicle_lock_storm_watch.py
 scripts/test_chronicle_lock_storm_watch.py
 scripts/finch_blocked_config_watch.py
+scripts/test_finch_blocked_config_watch.py
 scripts/finch_journal_write.py
 scripts/test_finch_journal_write.py
 scripts/finch_onemed_0929_watch.py
 scripts/test_finch_onemed_0929_watch.py
 scripts/finch_tokyo_ada_watch.py
+# Added 2026-10-20. Host-local admission probe + its watch sibling. The probe
+# reads THIS host's live source at fixed line numbers and the live executions.db,
+# and imports finch_admission_watch.py (itself host-only & unpublished via
+# scripts/*_watch.py). Cannot be genericised/published without its dependency.
+scripts/finch_admission_path_probe.py
 # Added 2026-09-29. The catch-all `scripts/*_watch.py` below already covers this
 # file's CLASS, but .gitignore only governs files that are not ALREADY tracked:
 # this one had been committed on 2026-09-27, so the pattern never applied to it

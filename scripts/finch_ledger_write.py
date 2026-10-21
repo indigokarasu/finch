@@ -56,6 +56,12 @@ EXIT CODES
        record. Every other control here compares one stamp to an external
        clock; this class is two stamps disagreeing with each other. Which side
        is false is not knowable from the record, so neither is rewritten.
+    6  nothing written -- this write would DELETE task records or scan_notes
+       that are on disk right now (a --doc is a full replacement).
+    7  nothing written -- this write introduced a task record whose `work_log`
+       is a bare STRING instead of a list. Every append to a string REPLACES
+       the whole log and the loss is silent (valid JSON, clean guard). Refused
+       rather than promoted, because promoting is a judgement about intent.
 
 USAGE
 -----
@@ -307,6 +313,36 @@ def find_stale_review_claims(doc, tolerance=REVIEW_LAG_TOLERANCE_S):
                          tid,
                          task.get("last_finch_review"),
                          _fmt(best), round(lag, 1), best_text))
+    return hits
+
+
+def find_bare_string_work_logs(doc):
+    """Tasks whose `work_log` is a bare STRING instead of a list.
+
+    Read-only. Returns [(trail, task_id, text)].
+
+    Measured live 2026-09-30: 126 records hold work_log as a LIST, 42 omit
+    the key, and ONE holds it as a bare STRING. A list-assuming reader indexes
+    the last CHARACTER there and silently walks prose -- the exact failure
+    #1021 hit itself when it treated notes/signal as lists. A writer that
+    carries such a shape forward (or introduces one) is the defect: every
+    append to a string REPLACES the whole log, and the loss is silent because
+    the file stays valid JSON and the guard stays clean.
+
+    This is a REFUSAL, not a correction, for the same reason find_stale_review_claims
+    is: the shape is the damage, and promoting a string to a list is a
+    judgement about intent that this tool will not make on a caller's behalf.
+    Pre-existing debt is reported, not refused, so the ledger keeps moving.
+    """
+    hits = []
+    for i, task in enumerate(doc.get("tasks", []) or []):
+        if not isinstance(task, dict):
+            continue
+        wl = task.get("work_log")
+        if isinstance(wl, str):
+            tid = task.get("id")
+            trail = ("task %s" % tid) if tid else ("tasks[%d]" % i)
+            hits.append((trail, tid, wl))
     return hits
 
 
@@ -608,6 +644,7 @@ def main():
     # debt stays visible. Measured 2026-09-29: 2 such entries live.
     pre_existing = set(find_unexpanded_lead_formats(doc))
     pre_stale = set(find_stale_review_claims(doc))
+    pre_bare = set(find_bare_string_work_logs(doc))
 
     if a.doc:
         try:
@@ -732,6 +769,29 @@ def main():
         for trail, tid, review, newest, lag, _text in stale:
             print("   %-12s %-44s review=%s entry=%s  (%+.1fh)"
                   % (trail, str(tid)[:44], review, newest, lag / 3600.0))
+
+
+    # A work_log held as a bare STRING is a shape defect: every append to a
+    # string REPLACES the whole log and the loss is silent (valid JSON, clean
+    # guard). Refused when NEWLY introduced; pre-existing debt is reported.
+    bare = find_bare_string_work_logs(doc)
+    new_bare = [h for h in bare if h not in pre_bare]
+    if new_bare:
+        print("VERDICT: REFUSED -- %d task record(s) in this write carry a"
+              " work_log held as a bare STRING instead of a list." % len(new_bare))
+        for trail, tid, text in new_bare:
+            print("   %-12s %-44s %r" % (trail, str(tid)[:44], text[:60]))
+        print("   Every append to a string REPLACES the whole log, and the loss")
+        print("   is silent (valid JSON, clean guard). Store the log as a list")
+        print("   of entries, never as a single string, and re-run.")
+        print("   Nothing was written.")
+        return 7
+    if bare:
+        print("debt    : %d PRE-EXISTING bare-string work_log(s) carried"
+              " through, not written by this run and not repairable here:"
+              % len(bare))
+        for trail, tid, text in bare:
+            print("   %-12s %-44s %r" % (trail, str(tid)[:44], text[:60]))
 
 
     print("ledger   : %s" % path)

@@ -41,6 +41,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+# --help guard (load-bearing: probe must not run tests or touch state)
+if any(a in ("-h", "--help", "help") for a in sys.argv[1:]):
+    sys.stdout.write((__doc__ or "").strip() + "\n")
+    sys.exit(0)
+
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "ucsf_mychart_invites.py"
 

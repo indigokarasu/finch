@@ -21,6 +21,11 @@ import sys
 import tempfile
 import unittest
 
+# --help guard (load-bearing: probe must not run tests or touch state)
+if any(a in ("-h", "--help", "help") for a in sys.argv[1:]):
+    sys.stdout.write((__doc__ or "").strip() + "\n")
+    sys.exit(0)
+
 WRITER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                       "finch_tasklist_single_write.py")
 
