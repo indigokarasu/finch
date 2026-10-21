@@ -179,7 +179,7 @@ def main():
             "GraphQL workersInvocationsAdaptive, using filter: {datetime_geq, "
             "datetime_leq}, limit, and selecting dimensions { date datetime "
             "scriptName } sum { requests errors subrequests duration }. Max window "
-            "4w4d. c2e55f42 (Indigo) upc-plu-lookup = 61 requests / 28 days, 0 "
+            "4w4d. c2e55f42 (agent) upc-plu-lookup = 61 requests / 28 days, 0 "
             "errors, peak 22 on 2026-10-03, last request 2026-10-19T13:54:46Z "
             "-- NOT the 100k/day consumer. The alerts name the billing account "
             "794136ed (Jared's Cloudflare account), which no local credential "
