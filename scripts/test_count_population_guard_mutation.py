@@ -16,6 +16,11 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# --help guard (load-bearing: probe must not run tests or touch state)
+if any(a in ("-h", "--help", "help") for a in sys.argv[1:]):
+    sys.stdout.write((__doc__ or "").strip() + "\n")
+    sys.exit(0)
 # Shared fixture-deletion guard; see rmtree_confined.py for why the invariant is
 # register-at-creation rather than "lives under /tmp".
 from rmtree_confined import new_root as _new_root  # noqa: E402

@@ -14,6 +14,11 @@ import subprocess
 import sys
 import tempfile
 
+# --help guard (load-bearing: probe must not run tests or touch state)
+if any(a in ("-h", "--help", "help") for a in sys.argv[1:]):
+    sys.stdout.write((__doc__ or "").strip() + "\n")
+    sys.exit(0)
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 TARGET = os.path.join(HERE, "finch_count_population_guard.py")
 

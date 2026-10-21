@@ -43,8 +43,7 @@ error_jobs = [j for j in jobs if str(j.get("last_status", "")).lower() == "error
 # NOTE: the live registry carries paused=true WITH enabled=true. A detector that
 # tests only `enabled is False` reports 0 paused for jobs that are plainly paused.
 paused_err = [j for j in error_jobs
-              if j.get("state") in ("paused",) or j.get("enabled") is False
-              or j.get("paused") is True]
+              if j.get("state") in ("paused",) or j.get("enabled") is False]:
 print(f"last_status=error: {len(error_jobs)}  (of which paused/disabled: {len(paused_err)})")
 
 # Bucket by consecutive_failures for triage (0 = likely recovered/transient)
