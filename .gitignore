@@ -86,3 +86,7 @@ scripts/test_*_watch*.py
 # belt-and-braces for the no-profile fallback path, which still writes here.
 scripts/disk_watch_baseline.json
 scripts/disk_watch_baseline.json.tmp
+
+# Auto-generated finch tasklist payloads (scratch)
+scripts/payload_*.json
+scripts/new_tasks_scan*.json
