@@ -38,7 +38,7 @@ metadata:
       description: Google Workspace OAuth credential directory.
       default: ~/.google_workspace_mcp/credentials
 name: ocas-finch
-source: https://github.com/<agent-handle>/finch
+source: https://github.com/indigokarasu/finch
 tags:
 - self-improvement
 - session-mining
