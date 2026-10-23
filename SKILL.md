@@ -13,7 +13,7 @@ includes:
 - scripts/**
 metadata:
   author: <profile> Karasu (indigokarasu)
-  version: "3.2.2"
+  version: "3.3.0"
   hermes:
     category: software-development
     tags:
@@ -135,12 +135,13 @@ Steering entries only — every other file is in `references/finch-support-map.m
 | File | When to read |
 |------|--------------|
 | `references/finch-support-map.md` | Any file not listed here — full per-file map |
+| `references/inflight-tracker.md` | The in-flight tracker (`finch:track`): projects, tasks and todos recorded from sessions, journals and logs. Records only; never acts; never reads email, calendar or Drive |
 | `references/scanning-traps.md` | Before writing a `degraded:`/"absent"/"0 errors" verdict, or any count you will report as complete — 43 dated traps in 7 groups; read the one matching your step |
 | `references/ledger-and-clock-protocol.md` | Before any ledger, journal, or scan-number write, and before changing a clock rule |
 | `references/scripts-reference.md` | Before running or changing a script — flags, exit codes, tests to run first |
-| `references/scanning-gotchas.md` · `finch-scan-pitfalls.md` · `cron-health-validation.md` · `scan-error-classification.md` · `email-mcp-triage.md` | During a scan — per-source mechanics and error classification |
+| `references/scanning-gotchas.md` · `finch-scan-pitfalls.md` · `cron-health-validation.md` · `scan-error-classification.md` · `email-mcp-triage.md` | Historical: the retired inbox/calendar scan. Finch no longer reads email, calendar or Drive |
 | `references/mail-self-reference-and-zero-vacuity.md` | Building or running ANY mail watcher — a keyword probe here matches finch's own output, and a zero must be proved non-vacuous before it is quoted |
-| `references/work-execution-procedures.md` · `work-prescribed-fix-selfrecovery-guard.md` · `signal-triage-before-fix.md` · `already-fixed-verification.md` | Before any finch:work task, and before honouring a prescribed fix |
+| `references/work-execution-procedures.md` · `work-prescribed-fix-selfrecovery-guard.md` · `signal-triage-before-fix.md` · `already-fixed-verification.md` | Historical: the retired task executor. Finch no longer acts on tasks; Mentor routes them to the owning skill |
 | `references/pitfalls.md` · `operational-gotchas.md` · `file-governance.md` · `forgetting_curve.md` · `mining_methodology.md` · `manual-run-verification.md` | Before any finch op; routing targets; compaction; mining; "run finch" and 401 triage |
 
 ## Scripts
