@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.3.0] - 2026-10-23
+
+### Changed
+- **Scope reset** — Finch observes and records only. The inbox/calendar/Drive scan and the task executor are retired. New `finch:track` keeps projects, in-flight tasks and todos from sessions, journals and logs (`data/ocas-finch/tracker.json` + `tracker.md`); project status is Mentor's call. See `references/inflight-tracker.md`.
+
 ## [3.2.1] - 2026-09-24
 
 ### Changed
