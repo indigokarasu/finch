@@ -9,6 +9,7 @@ Paths: OCAS_COMMONS (default ~/.hermes/commons). Usage: render_tracker.py
 """
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 
 COMMONS = os.environ.get("OCAS_COMMONS", os.path.expanduser("~/.hermes/commons"))
@@ -139,4 +140,7 @@ def main():
 
 
 if __name__ == "__main__":
+    if any(a in ("-h", "--help", "help") for a in sys.argv[1:]):
+        sys.stdout.write((__doc__ or "").strip() + "\n")
+        sys.exit(0)
     main()
