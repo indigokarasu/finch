@@ -20,7 +20,6 @@ alone — read the VERDICT line.
 | `memory_guard.py` | MEMORY.md safety floor (cap, atomic write) | `--apply --file <path>`, `--emit-decision`, `--json` |
 | `memory_state.py` | Reinforcement-state store (forgetting curve) | `reinforce`, `check`, `route`, `decay-report` |
 | `gws_direct_puller.py` | Workspace pull when MCP absent (googleapiclient; `<hermes-venv>/bin/python`) | `--full-text` |
-| `verify_signature.py` | Docusign EMAIL-SIGNATURE "unsigned" re-verifier; prints VERDICT | `--since <RFC3339>` probe |
 | `finch_hooks_plugin.py` | Hooks: signal capture, memory guard, subagent tracking | `--extract-signals`, `--check-tool` |
 | `finch_scan_tasklist_rerank.py` | Safe re-rank + validation for task-list.json | (positional path) |
 | `finch_scan_counter.py` | flock-atomic scan-number allocator; max-floor over header/journals/prose/sidecar | `--peek`, `--floor`, `--json`; EXIT 0 / 1 unreadable / 2 lock held |

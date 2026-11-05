@@ -110,7 +110,7 @@ Procedure: query `from:<domain>` (exact, server-side, cheap), then apply `re.sea
 
 #**A trailing `|` in a compiled alternation matches EVERYTHING — and a placeholder default makes a watcher report a clean mailbox.**
 
-Two defects in the SAME watcher, found on one pass (`scripts/care_portal_invites.py`, 2026-09-26). They belong together because each produces output that is *plausible, well-formatted, and wrong*, which is the exact condition under which a false negative survives review:
+Two defects in the SAME watcher, found on one pass (a host-local patient-portal invite watcher, 2026-09-26). They belong together because each produces output that is *plausible, well-formatted, and wrong*, which is the exact condition under which a false negative survives review:
 
 1. **Concatenating a possibly-empty string into a regex alternation.** The pattern ended `...|physical ?therapy" + os.environ.get("CARE_CUES_EXTRA", "")`, so with the variable unset the compiled regex ended in `|`. A trailing `|` is an **empty alternative**, and an empty alternative matches every string. The watcher's `booked_care_events` therefore listed **every** calendar event in the window — "Tea Room, Beach Vacation" and "A friend's birthday" were reported as booked care — with a sensible-looking count and EXIT 0. Join only non-empty sources; assert the compiled pattern has no dangling `|`.
 

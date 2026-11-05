@@ -27,8 +27,6 @@ assets/readme/hero.svg
 # is the mechanism that published a host filesystem root, a profile name and an
 # operator mailbox on 2026-09-26, and again on 2026-09-27. Published watchers
 # are the genericised ones under scripts/; these stay on the host.
-scripts/finch_book_watch.py
-scripts/event_watch.py
 scripts/test_block_ledger_hook.sh
 # Same class, same reason. These were NOT listed when the 8 of them were moved
 # out of the tree on 2026-09-28 (see 0c83f0f) -- an incomplete list, not a
@@ -43,9 +41,6 @@ scripts/finch_blocked_config_watch.py
 scripts/test_finch_blocked_config_watch.py
 scripts/finch_journal_write.py
 scripts/test_finch_journal_write.py
-scripts/finch_provider_watch.py
-scripts/test_finch_provider_watch.py
-scripts/finch_event_watch.py
 # Added 2026-10-20. Host-local admission probe + its watch sibling. The probe
 # reads THIS host's live source at fixed line numbers and the live executions.db,
 # and imports finch_admission_watch.py (itself host-only & unpublished via
@@ -90,3 +85,15 @@ scripts/disk_watch_baseline.json.tmp
 # Auto-generated finch tasklist payloads (scratch)
 scripts/payload_*.json
 scripts/new_tasks_scan*.json
+
+# Host-local watchers and probes for the operator's own mail, calendar and
+# accounts. They were removed from this public repo on 2026-11-05; these
+# patterns keep the auto-sync's `git add -A` from re-adding the host copies.
+# Patterns, not names: a filename can itself be personal data.
+scripts/*_invites.py
+scripts/test_*_invites.py
+scripts/verify_*_signature.py
+scripts/finch_scan[0-9]*_*.py
+scripts/test_*_body_claims.py
+journals/
+SKILL.md.*

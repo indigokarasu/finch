@@ -111,12 +111,12 @@ class TestArrivalScan(unittest.TestCase):
         A file at 2026-10-03T00:44:24Z must be found by a window given in
         UTC, regardless of what TZ the process is running under. If any
         code path handed a naive string to a shell date parser, this fails
-        under TZ=UTC and passes under UTC.
+        under a non-UTC TZ (e.g. Asia/Kolkata) and passes under UTC.
         """
         epoch = attr._epoch("2026-10-03T00:44:24Z")
         self._write("tz.bin", epoch)
         import time as _t
-        os.environ["TZ"] = "UTC"
+        os.environ["TZ"] = "Asia/Kolkata"
         try:
             _t.tzset()
             hits = attr.scan_arrivals([self.dir], epoch - 60, epoch + 60)

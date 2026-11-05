@@ -27,13 +27,11 @@ file you need.
 | `references/signal-types-table.md` | Before mining — signal type definitions and routing |
 | `references/interactive-menu.md` | When invoked interactively via `/` command — two-level menu layout, Clarify timeout, response parsing, platform adaptation |
 | `scripts/memory_guard.py` | Deterministic safety floor for MEMORY.md — hard cap enforcement, directive protection, pointer stripping, atomic locked write. Run as final step of finch.compact or via finch:memory-guard-floor cron |
-| `scripts/verify_signature.py` | When finch:work picks EMAIL-SIGNATURE (agreement) — reusable Docusign "unsigned" re-verifier; run via `terminal` python3, prints VERDICT |
 | `scripts/finch_hooks_plugin.py` | Hermes Agent Hooks plugin for real-time signal capture, memory tool guard, subagent delegation tracking, and prompt section registration |
 | `references/hermes-hooks-integration.md` | When optimizing Finch for Hermes Agent Hooks — lifecycle events, plugin/shell/gateway hook patterns, real-time signal observation, memory tool interception, subagent monitoring |
 | `references/security_architecture.md` | Security Architecture Reference |
 | `references/skill-audit-methodology.md` | Skill Audit Methodology |
 | `references/manual-run-verification.md` | When the user says "run finch", jobs 401 en masse, or you must force a cron run |
-| `references/signature-verify-rules.md` | When finch:work picks EMAIL-SIGNATURE — canonical-script rules for Docusign re-verification |
 | `references/email-mcp-triage.md` | During email triage — metadata-first classification, full-body only for candidates |
 | `references/work-execution-procedures.md` | Before executing any finch:work task — triage, actionability, resumption, anti-patterns |
 | `references/work-prescribed-fix-selfrecovery-guard.md` | When a task prescribes a specific fix — check self-recovery / fail-loud guards first |

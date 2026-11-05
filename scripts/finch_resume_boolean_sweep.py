@@ -34,14 +34,15 @@ import sys
 import tempfile
 
 # Which profile root to read. FINCH_PROFILE wins; otherwise the basename of
-# HERMES_HOME. The final fallback is the CONVENTIONAL profile name for this
-# deployment, spelled as a join so no denylisted entity is written literally
-# into a file that ships to a public repo -- the PII gate greps the source, not
-# the resolved value.
+# HERMES_HOME; otherwise the profile this skill is installed under (resolved at
+# runtime by _ocasenv.profile_root(), so no profile name is written into a file
+# that ships to a public repo).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # _ocasenv.py sits beside this script
+from _ocasenv import profile_root  # noqa: E402
 PROFILE_NAME = (
     os.environ.get("FINCH_PROFILE")
     or os.path.basename(os.environ.get("HERMES_HOME", "").rstrip("/"))
-    or "<profile>"   # conventional profile name
+    or os.path.basename(profile_root().rstrip("/"))
 )
 LIVE_HOME = os.path.join(os.path.expanduser("~/.hermes/profiles"), PROFILE_NAME)
 SCRIPTS = os.path.join(LIVE_HOME, "skills", "ocas-finch", "scripts")
