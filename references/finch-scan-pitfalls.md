@@ -65,7 +65,7 @@ gws_* call (search, content batch, get_events, list_drive_items).
 `failed argument validation at arguments.message_ids[0] (type)` when the list is nested one level
 too deep (`{'item': ['a','b']}`), which is what you get by reusing a prior metadata fetch's
 `by_id` structure. Unwrap to bare strings and assert `isinstance(i, str)` before calling. Full
-recipe: `gmail-content-batch-call-shape.md` (same directory).
+recipe: `retired/gmail-content-batch-call-shape.md`.
 
 ## 5. task-list.json SCHEMA CLOBBER — a scan can replace the `tasks` array with a 2-item `open_issues` stub
 

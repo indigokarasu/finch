@@ -28,6 +28,18 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Hermetic profile root. The control reads <profile root>/state; without a
+# fixture it pointed at whatever host ran the suite, so on a clean CI runner it
+# found an empty tree and three tests failed for want of host state rather than
+# for any defect. One known file under a temp HERMES_HOME tests the mechanism
+# the same way on every machine.
+_FIXTURE_HOME = tempfile.TemporaryDirectory(prefix="finch-attr-home-")
+os.makedirs(os.path.join(_FIXTURE_HOME.name, "state"))
+with open(os.path.join(_FIXTURE_HOME.name, "state", "probe.json"), "w") as _fh:
+    _fh.write("{}\n")
+os.environ["HERMES_HOME"] = _FIXTURE_HOME.name
+
 import finch_step_attribution as attr  # noqa: E402
 
 

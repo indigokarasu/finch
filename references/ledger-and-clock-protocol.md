@@ -478,7 +478,7 @@ follow, and the second is the one that bit.
 **An untracked-but-unignored file is invisible.** `git ls-files` lists the
 index, so a new file that is not ignored is not in it — and a file that
 `git add -A` is about to stage is exactly that. Measured 2026-09-30:
-`references/gmail-content-batch-call-shape.md` carried three real Gmail
+`references/retired/gmail-content-batch-call-shape.md` carried three real Gmail
 thread ids, the gate printed them each with `(gitignored, does not ship)`, and
 `git check-ignore` confirmed **no rule matches it** — it would have shipped.
 

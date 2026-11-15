@@ -1,6 +1,6 @@
 {
   "skill": "ocas-finch",
-  "version": "1.1.0",
+  "version": "3.4.0",
   "description": "Evaluation test cases for ocas-finch",
   "evals": [
     {
@@ -9,14 +9,19 @@
       "description": "Session mining"
     },
     {
-      "input": "What self-improvement tasks are pending?",
-      "expected_output": "Returns the prioritized task list from task-list.json with scan results and pending work items",
-      "description": "Task list status"
+      "input": "What's in flight right now?",
+      "expected_output": "Reads data/ocas-finch/tracker.json (written by finch:track) and lists waiting-on-you, in-progress, blocked or stalled items and open todos with their evidence; does not change any item or project status",
+      "description": "In-flight tracker status"
     },
     {
       "input": "Run the daily self-improvement pipeline",
-      "expected_output": "Executes finch.run: mines 24h of sessions, compacts MEMORY.md, routes findings, auto-applies low-risk items",
+      "expected_output": "Executes finch.run: mines 24h of sessions, compacts MEMORY.md, routes findings: Always/Never directives go to MEMORY.md via memory_guard.py, skill patches are staged for ocas-fellow review rather than applied",
       "description": "Daily pipeline"
+    },
+    {
+      "input": "Scan my email and calendar for action items and work through the open tasks",
+      "expected_output": "Declines both: Finch has not read email, calendar or Drive and has not executed tasks since 3.3.0. Points to finch:track for recording in-flight work and to Mentor for routing tasks to the owning skill",
+      "description": "Retired scope stays retired"
     },
     {
       "input": "Compact MEMORY.md",

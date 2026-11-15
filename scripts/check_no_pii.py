@@ -46,9 +46,15 @@ DENYLIST_FILE = REPO / ".pii-denylist"
 #: Put this on a line to exempt it (deliberate bad-examples, test fixtures).
 ALLOW_MARKER = "pii-allow"
 
-#: The author/org identity is meant to be published (LICENSE, repo URL);
-#: a denylist term inside one of these is not a leak.
-DENY_ALLOW = re.compile(r"Indigo Karasu|indigokarasu", re.IGNORECASE)
+#: The author/org identity is meant to be published (LICENSE, repo URL,
+#: SKILL.md metadata). This is the allowlist: a denylist term inside one of
+#: these is not a leak, and a scrubber must never rewrite them.
+PUBLIC_IDENTITY = ("Indigo Karasu", "indigokarasu")
+DENY_ALLOW = re.compile("|".join(re.escape(t) for t in PUBLIC_IDENTITY), re.IGNORECASE)
+
+#: Kinds that are reported even when the hit contains a placeholder, because
+#: the placeholder IS the defect.
+PLACEHOLDER_IS_THE_FINDING = {"scrubbed_identity"}
 
 # Domains/addresses that are documentation placeholders, not real people.
 ALLOWED_EMAIL = re.compile(
@@ -101,6 +107,12 @@ PATTERNS = [
     ("profile_name",
      re.compile(r"profiles/(?!<)[a-z0-9_-]+/"),
      "concrete profile name — use profiles/<profile>/"),
+    # Over-scrubbing: a blanket name replace once turned the published author
+    # field into a placeholder followed by the surname. The public identity is allowlisted
+    # (PUBLIC_IDENTITY) and must survive any scrub intact.
+    ("scrubbed_identity",
+     re.compile(r"<[A-Za-z0-9._-]+>[ _-]?Karasu\b|\bIndigo[ _-]?<[A-Za-z0-9._-]+>"),
+     "public author identity damaged by a scrub — restore 'Indigo Karasu'"),
 ]
 
 
@@ -224,7 +236,7 @@ def scan_text(text: str, denylist: list[str]):
                 hit = m.group(0)
                 if kind == "email" and ALLOWED_EMAIL.search(hit):
                     continue
-                if PLACEHOLDER.search(hit):
+                if kind not in PLACEHOLDER_IS_THE_FINDING and PLACEHOLDER.search(hit):
                     continue
                 yield i, kind, hit, hint
         low = line.lower()

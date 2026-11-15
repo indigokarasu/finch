@@ -141,3 +141,18 @@ was double-charged": no email, no id, nothing to match, but still a private
 detail about the operator. Routing is the real protection; the scanner is the
 backstop. Keep host-specific findings out of this directory and the scanner
 rarely has to fire.
+
+## Publishing
+
+This repo is public, so every publish goes through the PII gate before it leaves the host.
+
+1. Stage named paths only: `git add -u` for tracked files, then `git add <path>` for each new file you mean to ship. Never `git add -A`: it stages host state that no ignore rule anticipated.
+2. Run `python3 scripts/check_no_pii.py`. Any finding stops the publish; genericise and rerun. Exit 3 means nothing was scanned, which is not a pass.
+3. Commit to a `sync/<yyyy-mm-dd>` branch and push that branch. Never push to `main` directly and never `--force`.
+4. Open a PR. Merge only after CI is green (tests, `--help` gate, PII gate).
+
+Runtime output (`data/`, `journals/`, baselines) never ships; `.gitignore` excludes it.
+
+## Scrubbing names
+
+When a scrub replaces a profile or person name with a placeholder, it must skip the public author identity (`Indigo Karasu`, `indigokarasu`). A blanket replace of a first name turned the author field into `<profile> Karasu` on 2026-11-05. `scripts/check_no_pii.py` now fails on that damage (`scrubbed_identity`). <!-- pii-allow: names the defect -->

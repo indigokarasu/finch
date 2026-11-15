@@ -78,8 +78,8 @@ MEMORY_FILE = PROFILE_HOME / "MEMORY.md"
 
 **Gotcha**: The old two-branch logic (`name != "profiles"`) fails when `HERMES_HOME` is already the profile directory (name is e.g. `"<profile>"`, not `"profiles"`), causing double-nesting to `profiles/<profile>/profiles/<profile>/MEMORY.md`. Fixed in `scripts/memory_guard.py` as of 2026-06-21 — the script now uses three-branch logic: (1) detect if HERMES_HOME already IS the profile dir by checking `name == _HERMES_PROFILE && MEMORY.md.exists()`, (2) standard `profiles/` subdir layout, (3) fallback to HERMES_HOME directly.
 
-### Two evals.json files must be kept in sync
-There are two `evals.json` files: `evals.json` (root) and `evals/evals.json` (subdirectory). Both must be updated when adding/removing test cases. The root one is the canonical reference.
+### One evals file
+`evals/evals.json` is the only eval set (the duplicate root `evals.json` was removed in 3.4.0). Keep its `version` equal to SKILL.md's.
 
 ### The df-vs-du gap: deleted-but-open file holders (work execution)
 `df` counts blocks held by deleted-but-open files; `du` cannot see them. A test suite that copies a large SQLite DB, deletes the copy, and keeps the fds holds hundreds of MB to GB that vanish from every `du` walk — and a `df` sample taken during that window reads as unexplained disk growth.

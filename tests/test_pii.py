@@ -54,6 +54,18 @@ class PIIDetection(unittest.TestCase):
         hits = self._hits("spoke with Jane Doe today", denylist=["Jane Doe"])
         self.assertTrue(any(k == "denylist" for _, k, _, _ in hits))
 
+    def test_scrubbed_author_identity_is_caught(self):
+        """Regression: a name scrub turned the author field into '<profile> Karasu'."""  # pii-allow
+        bad = "  author: " + "<profile>" + " Karasu (indigokarasu)"
+        kinds = [k for _, k, _, _ in self._hits(bad)]
+        self.assertIn("scrubbed_identity", kinds)
+
+    def test_public_identity_is_allowlisted(self):
+        good = "  author: Indigo Karasu (indigokarasu)\nCopyright (c) 2026 Indigo Karasu"
+        self.assertEqual(self._hits(good), [])
+        hits = self._hits(good, denylist=["Indigo"])
+        self.assertEqual(hits, [], f"public identity must survive the denylist: {hits}")
+
     def test_denylist_is_case_insensitive(self):
         hits = self._hits("acme corporation invoice", denylist=["Acme Corporation"])
         self.assertTrue(any(k == "denylist" for _, k, _, _ in hits))

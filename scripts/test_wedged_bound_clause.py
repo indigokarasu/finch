@@ -127,4 +127,14 @@ if __name__ == "__main__":
     # on an optional dependency being installed.
     if any(a in ("-h", "--help") for a in sys.argv[1:]):
         raise SystemExit(_print_help())
+    # Exit 77 = SKIPPED: the suite pins the PRODUCTION resolver, so it cannot
+    # run without the agent source tree. tests/test_script_suites.py reports it
+    # as a named skip, never as a pass.
+    import importlib.util
+    if AGENT_SRC not in sys.path:
+        sys.path.insert(0, AGENT_SRC)
+    if importlib.util.find_spec("cron") is None:
+        print("SKIP host-only: the agent 'cron' package is not importable "
+              "(set FINCH_AGENT_SRC to the hermes-agent source tree).")
+        raise SystemExit(77)
     unittest.main(verbosity=2)

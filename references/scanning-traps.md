@@ -68,7 +68,7 @@ record, and it is where a new observation goes.
 
 - **A returned `next_page_token` is not a completed sweep** — `search_gmail_messages` returns ~30/page, and the token at the bottom of the response is easy to read as a footer. State the page count you actually pulled and which pages you deliberately skipped. A 2-day window that fits one page is complete; anything with unread pagination is a partial sweep and must be labelled `UNVERIFIED` (partial) rather than reported clean.
 
-- **Email scan loops `page_token` to completion** — page-1-only misses high-value mail; classify metadata-first (`email-mcp-pagination-parsing.md`, `email-mcp-triage.md`).
+- **Email scan loops `page_token` to completion** — page-1-only misses high-value mail; classify metadata-first (`retired/email-mcp-pagination-parsing.md`, `retired/email-mcp-triage.md`).
 
 - **Workspace MCP absent → pivot at once** to `scripts/gws_direct_puller.py` (googleapiclient; raw requests 404 through the host egress filter); record the source UNVERIFIED, never "no signal".
 
