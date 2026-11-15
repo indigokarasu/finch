@@ -42,7 +42,7 @@ When a task says "implement X" and you find X already exists, the correct outcom
 
 ## Distinction from Signal Triage
 
-Signal triage (see `references/signal-triage-before-fix.md`) decomposes a task into distinct root causes. Already-fixed verification checks whether the code already implements the requested fix. Use signal triage when the task says "fix these errors." Use already-fixed verification when the task says "implement this feature" or "investigate this systemic issue."
+Signal triage (see `references/retired/signal-triage-before-fix.md`) decomposes a task into distinct root causes. Already-fixed verification checks whether the code already implements the requested fix. Use signal triage when the task says "fix these errors." Use already-fixed verification when the task says "implement this feature" or "investigate this systemic issue."
 
 ## Mirror case: repair already landed while the task prose says "no progress"
 

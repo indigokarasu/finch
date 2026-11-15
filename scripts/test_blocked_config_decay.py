@@ -38,6 +38,14 @@ if any(a in ("-h", "--help", "help") for a in sys.argv[1:]):
     sys.stdout.write((__doc__ or "").strip() + "\n")
     sys.exit(0)
 
+# Exit 77 = SKIPPED (host-only dependency absent). tests/test_script_suites.py
+# reports it as a named skip in CI, never as a pass.
+import importlib.util  # noqa: E402
+if importlib.util.find_spec("finch_blocked_config_watch") is None:
+    print("SKIP host-only: finch_blocked_config_watch is a host-local watcher "
+          "(gitignored scripts/*_watch.py); run this suite on the host.")
+    sys.exit(77)
+
 from finch_blocked_config_watch import sweep, annotate_registry, _registry  # noqa: E402
 
 results = []

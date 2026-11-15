@@ -12,8 +12,8 @@ includes:
 - references/**
 - scripts/**
 metadata:
-  author: <profile> Karasu (indigokarasu)
-  version: "3.3.0"
+  author: Indigo Karasu (indigokarasu)
+  version: "3.4.0"
   hermes:
     category: software-development
     tags:
@@ -65,13 +65,13 @@ triggers:
 
 # ocas-finch
 
-Finch is the OCAS System Evolution Layer's self-improvement orchestrator: pure-LLM cron jobs plus one `no_agent` script floor (`finch:floor`). It mines 7 signal sources (cron health, email, calendar, sessions, Drive, kanban, system) and routes what it finds to durable targets.
+Finch is the OCAS System Evolution Layer's self-improvement orchestrator: pure-LLM cron jobs plus one `no_agent` script floor (`finch:floor`). Since 3.3.0 it observes and records only. `finch:scan` reads 4 signal sources (sessions, cron health, kanban, system); `finch:track` records projects, in-flight tasks and todos from sessions, journals and logs. Finch never reads email, calendar or Drive, and never acts on a task: Mentor routes tasks to the owning skill.
 
 Job names drift — enumerate the live registry, never a remembered set: `references/manual-run-verification.md`. Source table → `references/scan-work-architecture.md`.
 
 ## When to Use
 
-- Scheduled self-improvement: `finch:scan` (2h), `finch:work` (30m), `finch:daily` (6am local), `finch:weekly` (Sunday 8am local).
+- Scheduled self-improvement: `finch:scan` (2h), `finch:track`, `finch:daily` (6am local), `finch:weekly` (Sunday 8am local). `finch:work` was retired in 3.3.0.
 - Manual session mining via `finch.mine` / `finch.run`; after major sessions, to detect corrections, directives, breakthroughs, methodologies.
 - Memory at/near capacity: `finch.compact` / `memory_guard.py` — never hand-edit MEMORY.md to dodge the cap; Finch owns compaction.
 - Skill library maintenance: route findings to SKILL.md patches.
@@ -86,18 +86,13 @@ Before each scan, verify the run is actually executing (not a no-op):
 - [ ] For any count reported as complete: prove the denominator is non-vacuous (see `references/mail-self-reference-and-zero-vacuity.md` for the mail case)
 - [ ] Classify every errored job by fingerprint (`references/scan-error-classification.md`); `consecutive_failures > 0` = real, not transient
 
-**Input → Output example.** A `finch:scan` run reads 7 signal sources (cron health, email, calendar, sessions, Drive, kanban, system) and produces a ledger entry with a `scan_number` (allocated by `finch_scan_counter.py`), a per-source status line, and a routing list of findings. A clean scan writes `scan_number: N` with zero findings; a degraded scan writes `degraded: <source>` alongside the findings it did collect. Never write `0 errors` without first confirming the source answered — a silent source and a clean source differ only in the ledger, and conflating them is the trap `references/scanning-traps.md` exists to prevent.
+**Input → Output example.** A `finch:scan` run reads 4 signal sources (sessions, cron health, kanban, system) and produces a ledger entry with a `scan_number` (allocated by `finch_scan_counter.py`), a per-source status line, and a routing list of findings. A clean scan writes `scan_number: N` with zero findings; a degraded scan writes `degraded: <source>` alongside the findings it did collect. Never write `0 errors` without first confirming the source answered — a silent source and a clean source differ only in the ledger, and conflating them is the trap `references/scanning-traps.md` exists to prevent.
 
-### finch:work checklist
+### finch:track
 
-Before executing any `finch:work` task:
+Read `references/inflight-tracker.md` before a `finch:track` run. It writes only `tracker.json`, `tracker.md` and its own journal; items close only with evidence; project status is Mentor's call.
 
-- [ ] Triage the task against `references/work-execution-procedures.md` — is it actionable, resumable, or an anti-pattern?
-- [ ] If the task prescribes a specific fix, read `references/work-prescribed-fix-selfrecovery-guard.md` first — check whether the fix is already self-recovering
-- [ ] If resuming an interrupted investigation, read `references/already-fixed-verification.md` — verify the code already implements the requested fix before writing new code
-- [ ] Decompose multi-failure tasks into distinct root causes (`references/signal-triage-before-fix.md`)
-- [ ] Route each finding to its durable target per `references/file-governance.md`; user-scoped signals go to Chronicle/User Dreaming, never global behavior
-- [ ] After the write, run the relevant test suite and confirm the ledger forward-stamp is clean (`finch_ledger_guard.py`)
+The task executor (`finch:work`) was retired in 3.3.0. Its procedures are kept for history in `references/retired/`; do not run them.
 
 ## Why these rules hold
 
@@ -123,25 +118,25 @@ See `references/storage_behavioral_directives.md` for details.
 |---------|----------|
 | Job errors, cause unclear | Classify (`references/scan-error-classification.md`: HTTP 400 = MEDIUM, interpreter-shutdown = transient); `consecutive_failures` > 0 = real. |
 | Multiple jobs 401 at once | MCP-auth (stale `[mcp_servers]` in the profile `.env`) vs provider-auth (restart the gateway). |
-| Workspace source unreadable | Record a GAP; carry prior state forward as UNVERIFIED — never "no signal". |
+| Session, journal or log source unreadable | Record a GAP; carry prior state forward as UNVERIFIED — never "no signal". |
 | Signal source down | Degraded mode: continue with remaining inputs, log `degraded: <source>`. |
 | Memory write rejected | `finch.compact` / `memory_guard.py` — never hand-edit to dodge the cap. |
 
 See references/manual_run_commands_recovery.md for details.
 ## Support file map
 
-Steering entries only — every other file is in `references/finch-support-map.md`.
+Steering entries only — every reference file, grouped by job, is indexed in `references/README.md`.
 
 | File | When to read |
 |------|--------------|
-| `references/finch-support-map.md` | Any file not listed here — full per-file map |
+| `references/README.md` | Any file not listed here — grouped index of every reference file |
 | `references/inflight-tracker.md` | The in-flight tracker (`finch:track`): projects, tasks and todos recorded from sessions, journals and logs. Records only; never acts; never reads email, calendar or Drive |
 | `references/scanning-traps.md` | Before writing a `degraded:`/"absent"/"0 errors" verdict, or any count you will report as complete — 43 dated traps in 7 groups; read the one matching your step |
 | `references/ledger-and-clock-protocol.md` | Before any ledger, journal, or scan-number write, and before changing a clock rule |
 | `references/scripts-reference.md` | Before running or changing a script — flags, exit codes, tests to run first |
-| `references/scanning-gotchas.md` · `finch-scan-pitfalls.md` · `cron-health-validation.md` · `scan-error-classification.md` · `email-mcp-triage.md` | Historical: the retired inbox/calendar scan. Finch no longer reads email, calendar or Drive |
+| `references/scanning-gotchas.md` · `finch-scan-pitfalls.md` · `cron-health-validation.md` · `scan-error-classification.md` | During `finch:scan`: cron-health parsing and error classification. Their email and calendar sections describe the retired inbox scan |
 | `references/mail-self-reference-and-zero-vacuity.md` | Building or running ANY mail watcher — a keyword probe here matches finch's own output, and a zero must be proved non-vacuous before it is quoted |
-| `references/work-execution-procedures.md` · `work-prescribed-fix-selfrecovery-guard.md` · `signal-triage-before-fix.md` · `already-fixed-verification.md` | Historical: the retired task executor. Finch no longer acts on tasks; Mentor routes them to the owning skill |
+| `references/retired/` | Historical only: the retired task executor (`finch:work`) and inbox/Gmail scan. Never run these procedures |
 | `references/pitfalls.md` · `operational-gotchas.md` · `file-governance.md` · `forgetting_curve.md` · `mining_methodology.md` · `manual-run-verification.md` | Before any finch op; routing targets; compaction; mining; "run finch" and 401 triage |
 
 ## Scripts

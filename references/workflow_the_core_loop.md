@@ -6,7 +6,7 @@ Interactive invocation presents a two-level menu
 (`references/interactive-menu.md`).
 
 1. **Scan** (`finch:scan`, 2h) — read the 7 sources, update `task-list.json`. Cron health MUST come from the LIVE `jobs.json` (`references/cron-health-validation.md`), never `cronjob list` alone — it hides paused/disabled errors. Re-validate prior tasks both directions: re-open on relapse, resolve on recovery.
-2. **Work** (`finch:work`, 30m) — pick the top pending task, load the governing skill, execute ONE. De-duplicate task IDs first (`references/duplicate-task-detection.md`), then append `[Work log: <timestamp> <summary>]` and set `status: "done"`, `done_at`, `updated_at`.
+2. **Work** (`finch:work`, 30m) — pick the top pending task, load the governing skill, execute ONE. De-duplicate task IDs first (`references/retired/duplicate-task-detection.md`), then append `[Work log: <timestamp> <summary>]` and set `status: "done"`, `done_at`, `updated_at`.
 3. **Route** — classify scope first. A finding about this user's interaction preferences or their relationship with the agent goes to Chronicle/User Dreaming and MUST NOT become a global MEMORY.md rule or a skill patch. Agent/system-general findings route to MEMORY.md, skill patches, or references; proposed patches stage under `{agent_root}/commons/data/ocas-forge/staged/{skill}/` for `ocas-fellow` before production. Only genuinely system-general rules (priority 0) apply immediately.
 4. **Journal** — every run emits an entry under `{agent_root}/commons/journals/ocas-finch/`. **Do not let the model stamp the journal time**: derive it inside the write path from the real clock and clamp it with the ledger writer's due-date exclusion. Omit `completed_at`/`as_of` from any hand-built journal doc too; supply them and the writer clamps them to its own clock, so the file contradicts your prose.
 
@@ -118,7 +118,7 @@ which the guard excludes from the series.
 
 **Task selection priority:** `action_required: true` first; then high > medium > low; then earliest due; `pending` before `in_progress`. Skip `action_required: false` + `in_progress` (events in flight). Nothing actionable → validate and close the top pending item.
 
-**Work-execution rules** (details in `references/work-execution-procedures.md`): triage signal (real / stale / transient); actionability filter (unattended cron); pipeline resumption from the ledger; break repeated check-and-close loops; prescribed fixes may be wrong — verify self-recovery / fail-loud guards first (`references/work-prescribed-fix-selfrecovery-guard.md`).
+**Work-execution rules** (details in `references/retired/work-execution-procedures.md`): triage signal (real / stale / transient); actionability filter (unattended cron); pipeline resumption from the ledger; break repeated check-and-close loops; prescribed fixes may be wrong — verify self-recovery / fail-loud guards first (`references/retired/work-prescribed-fix-selfrecovery-guard.md`).
 
 **Mining frameworks** (`references/mining_methodology.md`): scope before transfer. User-scoped relationship corrections route to Chronicle/User Dreaming; only agent/system-general signals continue through Finch. For those, tag failures by phase — **Planning** → patch preconditions; **Execution** → patch gotchas; **Response** → patch output sections. Record corrections as `[CORRECTION] What / Why / When` so lessons transfer.
 

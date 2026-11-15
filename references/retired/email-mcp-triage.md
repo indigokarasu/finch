@@ -12,7 +12,7 @@ marketing). Procedure (confirmed across multiple finch:scan runs):
 2. **Metadata first.** Fetch `get_gmail_messages_content_batch(message_ids=[...],
    format="metadata")` in pages of <=25. Returns Subject/From/Date/To — enough to
    triage. For parsing the persisted batch file, see
-   `references/email-mcp-pagination-parsing.md`.
+   `references/retired/email-mcp-pagination-parsing.md`.
 3. **Full body last.** Only pull `format="full"` for the handful whose metadata
    suggests actionability (non-`no-reply` sender + decision/action subject).
 

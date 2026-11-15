@@ -34,20 +34,31 @@ if "--help" in sys.argv or "-h" in sys.argv:
     print("Usage: test_finch_scan_counter.py   (no arguments; exit 0 = all checks pass)")
     sys.exit(0)
 
-print("1. --floor on the real ledger (read path, allocates nothing)")
-r = run("--floor", "--json")
-check("floor exits 0", r.returncode == 0, r.stderr)
-ev = json.loads(r.stdout) if r.returncode == 0 else {}
-check("floor >= 174 (duplicate #174 cannot be reused)",
-      ev.get("floor", 0) >= 174, "floor=%s" % ev.get("floor"))
-check("next is floor+1", ev.get("next") == ev.get("floor", 0) + 1)
-check("no sidecar written by --floor", not os.path.exists(
-    os.path.join(tempfile.gettempdir(), "never")))
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location("cnt_live", SCRIPT)
+_live = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_live)
+# Sections 1-2 read THIS host's live ledger by design (the #174 floor is a
+# fact about that ledger). Where it does not exist (a CI runner, a fresh
+# checkout) they are reported as SKIPPED by name, never counted as passing;
+# sections 3+ build their own fixtures and always run.
+if not os.path.exists(_live.LEDGER):
+    print("1-2. SKIP host-only: live ledger not present on this machine")
+else:
+    print("1. --floor on the real ledger (read path, allocates nothing)")
+    r = run("--floor", "--json")
+    check("floor exits 0", r.returncode == 0, r.stderr)
+    ev = json.loads(r.stdout) if r.returncode == 0 else {}
+    check("floor >= 174 (duplicate #174 cannot be reused)",
+          ev.get("floor", 0) >= 174, "floor=%s" % ev.get("floor"))
+    check("next is floor+1", ev.get("next") == ev.get("floor", 0) + 1)
+    check("no sidecar written by --floor", not os.path.exists(
+        os.path.join(tempfile.gettempdir(), "never")))
 
-print("2. --peek does not allocate")
-r = run("--peek", "--json")
-check("peek exits 0", r.returncode == 0, r.stderr)
-check("peek has no 'allocated' key", "allocated" not in json.loads(r.stdout))
+    print("2. --peek does not allocate")
+    r = run("--peek", "--json")
+    check("peek exits 0", r.returncode == 0, r.stderr)
+    check("peek has no 'allocated' key", "allocated" not in json.loads(r.stdout))
 
 print("3. unreadable ledger -> exit 1, explicitly NOT clean")
 import importlib.util
@@ -141,21 +152,25 @@ with tempfile.TemporaryDirectory() as td:
     # Guard and allocator must agree on the corpus. This is the property whose
     # absence produced the blind spot, so assert it against the REAL journals
     # rather than a fixture.
-    import glob as _glob
-    import re as _re
-    real_mod = load_counter()          # fresh module bound to the REAL paths
-    real_guard, real_alloc = set(), set()
-    for jf in _glob.glob(os.path.join(real_mod.JOURNALS, "**", "*.json"), recursive=True):
-        try:
-            jd = json.load(open(jf))
-        except Exception:
-            continue
-        for m in _re.finditer(r"finch:scan\s*#\s*(\d{1,4})\b", json.dumps(jd, ensure_ascii=False)):
-            real_guard.add(int(m.group(1)))
-    real_alloc = set(real_mod.evidence()["prose_scan_numbers"])
-    missing = real_guard - real_alloc
-    check("allocator sees EVERY number the guard sees (real journals)",
-          not missing, "blind to %s" % sorted(missing))
+    if not os.path.exists(_live.LEDGER):
+        print("  SKIP host-only: allocator/guard agreement on the REAL journals "
+              "(live ledger not present on this machine)")
+    else:
+        import glob as _glob
+        import re as _re
+        real_mod = load_counter()          # fresh module bound to the REAL paths
+        real_guard, real_alloc = set(), set()
+        for jf in _glob.glob(os.path.join(real_mod.JOURNALS, "**", "*.json"), recursive=True):
+            try:
+                jd = json.load(open(jf))
+            except Exception:
+                continue
+            for m in _re.finditer(r"finch:scan\s*#\s*(\d{1,4})\b", json.dumps(jd, ensure_ascii=False)):
+                real_guard.add(int(m.group(1)))
+        real_alloc = set(real_mod.evidence()["prose_scan_numbers"])
+        missing = real_guard - real_alloc
+        check("allocator sees EVERY number the guard sees (real journals)",
+              not missing, "blind to %s" % sorted(missing))
     # The two tools keep SEPARATE copies of the prose pattern (no import, so
     # each script still runs standalone). That duplication is only safe while
     # a test compares them -- this is that test, and it is why the patterns are
@@ -232,8 +247,12 @@ check("no concrete profile path in a string literal",
 check("no absolute host root in a string literal",
       os.sep.join(["", "root", ".hermes", ""]) not in _src,
       "hardcoded host root found")
-check("LEDGER resolves to a real file", os.path.isfile(_m.LEDGER), _m.LEDGER)
-check("JOURNALS resolves to a real dir", os.path.isdir(_m.JOURNALS), _m.JOURNALS)
+if not os.path.exists(_live.LEDGER):
+    print("  SKIP host-only: LEDGER/JOURNALS resolve to real paths "
+          "(live ledger not present on this machine)")
+else:
+    check("LEDGER resolves to a real file", os.path.isfile(_m.LEDGER), _m.LEDGER)
+    check("JOURNALS resolves to a real dir", os.path.isdir(_m.JOURNALS), _m.JOURNALS)
 
 print("8. the LIVE header key name is honoured (regression, finch:work #1164)")
 # Measured 2026-10-04 on the real ledger: the header carries NO `scan_number`

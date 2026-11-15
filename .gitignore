@@ -97,3 +97,7 @@ scripts/finch_scan[0-9]*_*.py
 scripts/test_*_body_claims.py
 journals/
 SKILL.md.*
+
+# Runtime output: never publish (activity models, trackers, ledgers).
+# A committed data/activity_model.jsonl rode the auto-sync into this repo on 2026-10-21.
+data/

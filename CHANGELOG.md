@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.4.0] - 2026-11-15
+
+### Fixed
+- **SKILL.md matches the 3.3.0 scope.** `finch:scan` reads 4 sources (sessions, cron health, kanban, system). The claims that Finch reads email, calendar and Drive are gone, the retired `finch:work` checklist is replaced by a `finch:track` section, and the author field reads "Indigo Karasu" again.
+- **All script test suites run in CI.** `tests/test_script_suites.py` runs every `scripts/test_*.py` (20 suites that CI never ran). Suites that need host-only state exit 77 and are reported as named skips, never as passes. Three suites that failed on a clean machine now use fixtures.
+- **PII gate protects the public identity.** `check_no_pii.py` has a `PUBLIC_IDENTITY` allowlist and a `scrubbed_identity` check that fails when a scrub damages the author name.
+
+### Changed
+- **Publishing is gated.** `data/` is gitignored and the empty `data/activity_model.jsonl` is untracked. Docs replace the blind `git add -A` push to `main` with named staging, the PII gate and a CI-checked PR (`references/reference-file-workflow.md` § Publishing).
+- **References reorganised.** `references/README.md` indexes every file by job. Retired executor and Gmail-scan docs moved to `references/retired/`; four empty stubs removed.
+- **README** describes current behavior. **Evals:** one file, `evals/evals.json`, at 3.4.0, with cases for the tracker and the retired scope.
+
+### Removed
+- Six one-off edit scripts at the repo root (`improve_d5d6.sh`, `apply_pointers.sh`, `extract_and_point.py`, `extract_sections.sh`, `backup.sh`, `backup_skill.sh`) and the duplicate root `evals.json`.
+
 ## [3.3.0] - 2026-10-23
 
 ### Changed
